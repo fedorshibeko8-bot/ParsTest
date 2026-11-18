@@ -731,6 +731,39 @@ class Database:
             ).fetchall()
         return [Post.from_row(row) for row in rows]
 
+    async def list_for_image_cleanup(
+        self, *, now: datetime | None = None, keep_hours: int = 48
+    ) -> list[Post]:
+        """Посты, у которых пора удалить файл картинки (T06).
+
+        Берутся только завершённые посты (``published``/``dropped``) с
+        заполненным ``image_path``, у которых момент завершения (или создания,
+        если метки нет) старше ``keep_hours``. Сами строки не меняются:
+        решение об удалении файла и очистке пути принимает сервис картинок.
+        """
+        return await asyncio.to_thread(
+            self._list_for_image_cleanup_sync, now, keep_hours
+        )
+
+    def _list_for_image_cleanup_sync(
+        self, now: datetime | None, keep_hours: int
+    ) -> list[Post]:
+        moment = _as_datetime(now)
+        cutoff = to_iso(moment - timedelta(hours=max(1, int(keep_hours))))
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"SELECT {_POST_COLUMNS} FROM posts "
+                "WHERE image_path IS NOT NULL AND status IN (?, ?) "
+                "AND COALESCE(published_at, dropped_at, created_at) <= ? "
+                "ORDER BY COALESCE(published_at, dropped_at, created_at) ASC, id ASC",
+                (
+                    PostStatus.PUBLISHED.value,
+                    PostStatus.DROPPED.value,
+                    cutoff,
+                ),
+            ).fetchall()
+        return [Post.from_row(row) for row in rows]
+
     # ------------------------------------------------------------------
     # Дедупликация: ступень 1 и лог серых зон
     # ------------------------------------------------------------------

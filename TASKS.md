@@ -20,9 +20,9 @@
 | Метрика | Значение |
 |---|---|
 | Всего задач | 12 |
-| done | 5 |
+| done | 6 |
 | in_progress | 0 |
-| todo | 6 |
+| todo | 5 |
 | blocked | 1 |
 
 ---
@@ -68,10 +68,10 @@
 - **Что сделать:** 1) точное совпадение URL/GUID; 2) `difflib.SequenceMatcher` по нормализованным заголовкам: ≥0.85 — дубль (молча), 0.70–0.85 — «серая зона» (пометка в карточке + запись в `dedup_log`), <0.70 — новая; 3) сравнение с pending+published за последние 7 дней. Пороги — в конфиге. Без LLM и эмбеддингов (второй этап).
 
 ### T06 — Скачивание картинок при обнаружении
-- **Статус:** `todo`
+- **Статус:** `done`
 - **Зависимости:** T03
-- **Исполнитель:** —
-- **Результат:** —
+- **Исполнитель:** агент T06 (DeepSeek/OpenCode), 2026-11-18
+- **Результат:** Создан `bot/services/images.py`: определение формата по «магическим» байтам (`detect_image_type` — JPEG/PNG/GIF/WebP/AVIF, HTML и SVG отклоняются), потоковое скачивание `download_image` с контролем `Content-Length` и накопленного размера (`ImageTooLargeError`), проверкой схемы URL, таймаутом и редиректами, атомарной записью в `images_dir` под именем `uuid4` + расширение; мягкий вариант `try_download_image` (ошибка → `None`, новость не теряется). Очистка: `cleanup_post_images` удаляет файлы через `IMAGE_KEEP_HOURS` после `published`/`dropped`, чистит `image_path` (в т.ч. если файл уже удалён), не трогает файлы вне `images_dir`; `remove_image_file` и фоновый `cleanup_loop`. В `bot/db.py` — `Database.list_for_image_cleanup`. В `bot/config.py` — `Settings.image_max_mb` (10), `image_keep_hours` (48), свойство `image_max_bytes`; `.env.example` дополнен. Тесты: `tests/test_images.py` — 40 тестов (форматы, лимиты, HTML, HTTP/сеть, очистка, защита путей, конфиг). **149 тестов проходит.**
 - **Что сделать:** вытащить картинку из RSS-записи (enclosure/media:content/og:image как фоллбэк), скачать в `data/images/` в момент обнаружения, лимит размера, валидация типа, удаление файлов через 48 ч после `published`/`dropped`.
 
 ---
@@ -156,3 +156,4 @@
 | 2026-11-18 | агент T03 (DeepSeek/OpenCode) | T03 → `done`; RSS-парсер и опрос с jitter, 55 тестов pytest (24 новых) |
 | 2026-11-18 | агент T04 (DeepSeek/OpenCode) | T04 → `done`; фильтр по ключевым словам + `NEWS_KEYWORDS`, 88 тестов pytest (33 новых) |
 | 2026-11-18 | агент T05 (DeepSeek/OpenCode) | T05 → `done`; дедупликация трёх ступеней + лог серых зон, 109 тестов pytest (21 новый) |
+| 2026-11-18 | агент T06 (DeepSeek/OpenCode) | T06 → `done`; скачивание/валидация/очистка картинок + `IMAGE_MAX_MB`/`IMAGE_KEEP_HOURS`, 149 тестов pytest (40 новых) |

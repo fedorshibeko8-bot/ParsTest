@@ -224,6 +224,10 @@ class Settings:
     database_path: Path
     images_dir: Path
 
+    # Картинки (T06)
+    image_max_mb: int
+    image_keep_hours: int
+
     # Опрос RSS
     poll_interval_min_sec: int
     poll_interval_max_sec: int
@@ -243,6 +247,11 @@ class Settings:
     def is_admin(self, user_id: int | None) -> bool:
         """Является ли пользователь администратором канала."""
         return user_id is not None and user_id in self.admin_ids
+
+    @property
+    def image_max_bytes(self) -> int:
+        """Лимит размера картинки в байтах (для сверки с ``Content-Length``)."""
+        return self.image_max_mb * 1024 * 1024
 
     def ensure_directories(self) -> None:
         """Создать рабочие каталоги (данные, картинки, логи), если их нет."""
@@ -355,6 +364,9 @@ def load_settings(env_path: Path | None = None) -> Settings:
             "DEDUP_DUPLICATE_THRESHOLD должен быть больше DEDUP_GRAY_ZONE_THRESHOLD."
         )
 
+    image_max_mb = reader.integer("IMAGE_MAX_MB", 10, minimum=1)
+    image_keep_hours = reader.integer("IMAGE_KEEP_HOURS", 48, minimum=1)
+
     if errors:
         raise ConfigError("\n".join(f"- {message}" for message in errors))
 
@@ -372,6 +384,8 @@ def load_settings(env_path: Path | None = None) -> Settings:
         logs_dir=_resolve_path(reader.text("LOGS_DIR"), "logs"),
         database_path=_resolve_path(reader.text("DATABASE_PATH"), "data/bot.db"),
         images_dir=_resolve_path(reader.text("IMAGES_DIR"), "data/images"),
+        image_max_mb=image_max_mb,
+        image_keep_hours=image_keep_hours,
         poll_interval_min_sec=poll_interval_min_sec,
         poll_interval_max_sec=poll_interval_max_sec,
         http_timeout_sec=reader.integer("HTTP_TIMEOUT_SEC", 20, minimum=5),
