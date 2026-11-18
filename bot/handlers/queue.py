@@ -10,11 +10,11 @@ from __future__ import annotations
 import logging
 
 from aiogram import Bot, F, Router
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message
 
 from bot.config import Settings
 from bot.db import Database
+from bot.services.cards import refresh_card
 from bot.services.queue import (
     TAKE_CALLBACK_PREFIX,
     parse_take_callback,
@@ -53,16 +53,9 @@ async def handle_take(
         return
 
     await callback.answer("Пост ваш.")
-    if isinstance(callback.message, Message):
-        # Убираем кнопку у владельца, чтобы он не нажал её повторно.
-        try:
-            await callback.message.edit_text(
-                f"✅ Пост #{post_id} за вами. "
-                f"Тайм-аут бездействия — {settings.intercept_timeout_minutes} мин."
-            )
-        except TelegramBadRequest:
-            # Сообщение могли удалить или оно старше 48 часов — не критично.
-            logger.debug("Не удалось обновить уведомление поста #%s", post_id)
+    if isinstance(callback.message, Message) and outcome.post is not None:
+        # Превращаем уведомление в карточку: текст — редактируем, фото — новое.
+        await refresh_card(bot, callback.message, outcome.post)
 
 
 __all__ = ["handle_take", "router"]

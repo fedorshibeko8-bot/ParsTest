@@ -278,6 +278,31 @@ async def try_download_image(
         return None
 
 
+async def save_image_bytes(data: bytes, settings: Settings) -> DownloadedImage:
+    """Сохранить присланные админом байты картинки (T08).
+
+    Тип и размер проверяются так же, как при скачивании с сайта: Telegram
+    уже сжимает фото, но лимит и формат подтверждаем сами.
+    """
+    if not data:
+        raise ImageTypeError("Пустой файл картинки.")
+    limit = settings.image_max_bytes
+    if len(data) > limit:
+        raise ImageTooLargeError(
+            f"Картинка больше лимита: {len(data)} > {limit} байт.",
+            limit_bytes=limit,
+            size_bytes=len(data),
+        )
+    mime_type = detect_image_type(data)
+    if mime_type is None:
+        raise ImageTypeError("Файл не является картинкой JPEG/PNG/GIF/WebP/AVIF.")
+    path = await asyncio.to_thread(
+        _write_image_atomic, data, settings.images_dir, extension_for(mime_type)
+    )
+    logger.info("Картинка от админа сохранена: %s (%d байт, %s)", path, len(data), mime_type)
+    return DownloadedImage(path=path, mime_type=mime_type, size_bytes=len(data))
+
+
 # ----------------------------------------------------------------------
 # Удаление старых файлов
 # ----------------------------------------------------------------------
@@ -408,5 +433,6 @@ __all__ = [
     "download_image",
     "extension_for",
     "remove_image_file",
+    "save_image_bytes",
     "try_download_image",
 ]

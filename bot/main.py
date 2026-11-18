@@ -19,10 +19,12 @@ import sys
 from aiogram import Bot, Dispatcher
 from aiogram.exceptions import TelegramUnauthorizedError
 from aiogram.filters import Command, CommandStart
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message
 
 from bot.config import ConfigError, Settings, load_settings
 from bot.db import Database
+from bot.handlers.cards import router as cards_router
 from bot.handlers.queue import router as queue_router
 from bot.services.queue import maintenance_loop
 from bot.utils.logging import setup_logging
@@ -46,15 +48,16 @@ def _configure_console() -> None:
 
 
 def build_dispatcher(settings: Settings, db: Database) -> Dispatcher:
-    """Собрать диспетчер: служебные команды и кнопку перехвата.
+    """Собрать диспетчер: служебные команды, перехват и карточку поста.
 
     ``db`` и ``settings`` кладутся в workflow data — aiogram подставит их
     в хендлеры по именам аргументов.
     """
-    dispatcher = Dispatcher()
+    dispatcher = Dispatcher(storage=MemoryStorage())
     dispatcher["settings"] = settings
     dispatcher["db"] = db
     dispatcher.include_router(queue_router)
+    dispatcher.include_router(cards_router)
 
     async def deny(message: Message) -> None:
         user = message.from_user
