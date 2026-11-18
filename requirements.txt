@@ -1,0 +1,7 @@
+# Зависимости проекта (Python 3.12, Windows).
+# Версии зафиксированы, чтобы поведение не менялось неожиданно.
+# Устанавливаются в .venv командой: .venv\Scripts\python.exe -m pip install -r requirements.txt
+aiogram==3.32.0
+python-dotenv==1.2.4
+feedparser==6.0.14
+httpx==0.28.1
