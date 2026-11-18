@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+     xmlns:media="http://search.yahoo.com/mrss/"
+     xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>VGC</title>
+    <link>https://videogameschronicle.com/</link>
+    <description>Video Games Chronicle - синтетическая тестовая лента</description>
+    <language>en</language>
+    <lastBuildDate>Tue, 18 Nov 2026 10:00:00 +0000</lastBuildDate>
+    <item>
+      <title>GTA 6 trailer breaks records, Rockstar confirms</title>
+      <link>https://videogameschronicle.com/news/gta-6-trailer-records/</link>
+      <guid isPermaLink="false">vgc-2026-11-18-001</guid>
+      <pubDate>Tue, 18 Nov 2026 09:30:00 +0000</pubDate>
+      <description><![CDATA[<p>Rockstar&nbsp;Games said the second <strong>GTA 6</strong> trailer
+      reached 100 million views in a day.</p>]]></description>
+      <enclosure url="https://cdn.videogameschronicle.com/files/2026/11/gta6-trailer.jpg"
+                 length="123456" type="image/jpeg"/>
+    </item>
+    <item>
+      <title>Silent Hill remake dated for spring</title>
+      <link>https://videogameschronicle.com/news/silent-hill-dated/</link>
+      <guid isPermaLink="false">vgc-2026-11-18-002</guid>
+      <pubDate>Tue, 18 Nov 2026 08:05:00 +0000</pubDate>
+      <description><![CDATA[<p>Konami announced a release window for the remake.</p>]]></description>
+      <media:content url="https://cdn.videogameschronicle.com/files/2026/11/silent-hill.jpg"
+                     medium="image" type="image/jpeg"/>
+    </item>
+  </channel>
+</rss>

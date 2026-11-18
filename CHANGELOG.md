@@ -20,6 +20,9 @@
 - **Telegram-доступы настроены (частично T12).** Токен `@ParsgtaBot_bot` проверен через `getMe`; бот добавлен администратором в канал «FOWGSL» (`@fowgsl`, `-1004371911262`) с правами публикации. `CHANNEL_ID` и `ADMIN_IDS` (`7846135495`, `1389758957`, `1825876129`) записаны в локальный `.env`, ACL файла ограничен пользователем. Все три админа активировали бота. Проверен запуск: long polling, «Run polling for bot @ParsgtaBot_bot», ошибок нет. Ключи Gemini/Groq пока не предоставлены — режим `DRY_RUN=1`. Автор: агент-координатор (OpenCode).
 - **Утилита получения chat_id.** `tools/get_chat_id.py` опрашивает `getUpdates` и печатает ID групп/каналов, где бот видит сообщения — чтобы заполнить `CHANNEL_ID` без сторонних ботов. Автор: агент-координатор (OpenCode).
 
+### Добавлено
+- **T03: RSS-парсер и планировщик опроса.** `bot/parsers/sources.py` — 5 источников из п. 2 ТЗ как данные (`FeedSource`, `SOURCES`: VGC, IGN, Eurogamer, GamesRadar+, GameSpot), без размазывания URL по коду. `bot/parsers/rss.py` — загрузка через `httpx.AsyncClient` (свой User-Agent, таймаут из `HTTP_TIMEOUT_SEC`, следование редиректам), чистая функция `parse_feed` (байты ленты → `FeedItem`, RSS 2.0 и Atom), нормализация заголовка и лида (~200 символов после очистки HTML), дата публикации в UTC, картинка из `enclosure` → `media:content` → `media:thumbnail` (только URL, скачивание — T06), дедуп через `seen_urls` (`is_url_seen`/`mark_url_seen`), `jitter_delay` = `random.uniform(POLL_INTERVAL_MIN_SEC, POLL_INTERVAL_MAX_SEC)`, `poll_forever` — отдельная задача на источник, отмена по `asyncio.Event`, подписчик `on_item` для T05/T07, `poll_all_sources` для ручного прогона. 403/429, таймауты и битый XML логируются и не роняют цикл; `Retry-After` учитывается (с ограничением 1 ч). Тесты: `tests/test_rss.py` (24 офлайн-теста на `httpx.MockTransport`), фикстуры `tests/fixtures/rss_vgc.xml`, `tests/fixtures/atom_ign.xml`, `tests/fixtures/broken_gamespot.xml`, помощник `make_settings` в `tests/helpers.py`. Файлы: `bot/parsers/sources.py`, `bot/parsers/rss.py`, `bot/parsers/__init__.py`, `tests/test_rss.py`, `tests/fixtures/*.xml`, `tests/helpers.py`. Автор: агент T03 (DeepSeek/OpenCode). **55 тестов проходит.**
+
 ### Решения
 - **Канал — только для новостей.** В «FOWGSL» попадают исключительно опубликованные посты. Все служебные сообщения (уведомления, «взял админ», превью, ошибки) идут только в личку админам. `CHANNEL_ID` использует только `publisher` (T10).
 - **Тихий режим — опция, а не режим по умолчанию.** Новости публикуются с обычным уведомлением подписчиков; `disable_notification` включается флагом `PUBLISH_SILENT=1`.
@@ -34,6 +37,12 @@
 - **T01: коды возврата процесса** — `0` успех, `1` ошибка работы, `2` ошибка конфигурации, `3` Telegram отклонил токен. Пригодится `run.bat` и Планировщику задач Windows.
 - **T01: имена переменных зафиксированы** — см. `.env.example` (`POLL_INTERVAL_MIN_SEC`/`POLL_INTERVAL_MAX_SEC`, `HTTP_TIMEOUT_SEC`, `POST_TTL_HOURS`, `INTERCEPT_TIMEOUT_MINUTES`, `QUEUE_VISIBLE_LIMIT`, `DEDUP_DUPLICATE_THRESHOLD`, `DEDUP_GRAY_ZONE_THRESHOLD`, `LOGS_DIR`). Следующие задачи (T03, T05, T07) должны читать значения только из `Settings`, а не из `os.getenv` напрямую.
 - **T01: версии зависимостей зафиксированы:** aiogram 3.32.0, python-dotenv 1.2.4, feedparser 6.0.14, httpx 0.28.1. SDK Gemini/Groq не добавлялись — только REST через `httpx` (T09).
+
+### Передача дальше (T04)
+- Новости приходят как `bot.parsers.rss.FeedItem` (`url`, `source`, `title`, `guid`, `lead`, `published_at`, `image_url`). Лид уже очищен от HTML и обрезан до ~200 символов — фильтру остаётся нормализовать регистр и искать ключи в `title` + `lead`.
+- Подписка на находки: `poll_forever(db, settings, stop_event, on_item)`, `on_item` может быть корутиной (вызывается до записи в `seen_urls`; ошибка подписчика не теряет запись — она повторится).
+- Парсер сам пишет URL/GUID в `seen_urls`: в T04 этого делать не нужно и пост создавать не нужно (это T07).
+- Никакой сети в тестах: берите `parse_feed` + фикстуры из `tests/fixtures`, настройки — через `make_settings` из `tests/helpers.py`. Новые ключи и пороги добавляйте в `Settings`/`.env.example`, не через `os.getenv`.
 
 ### Передача дальше (T03)
 - Парсер строится на `Database` (`bot/db.py`): `create_post(...)`, `is_url_seen(url, guid)`, `mark_url_seen(...)`, `list_pending`, `list_for_dedup`. Не писать SQL в парсере.

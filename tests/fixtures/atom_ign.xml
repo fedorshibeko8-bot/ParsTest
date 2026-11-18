@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:media="http://search.yahoo.com/mrss/">
+  <title>IGN Games</title>
+  <id>tag:ign.com,2026:games</id>
+  <updated>2026-11-18T10:00:00Z</updated>
+  <link href="https://www.ign.com/games"/>
+  <entry>
+    <title>Grand Theft Auto 6: everything we know so far</title>
+    <id>tag:ign.com,2026:news/12345</id>
+    <link rel="alternate" href="https://www.ign.com/articles/gta-6-what-we-know"/>
+    <published>2026-11-18T09:45:00Z</published>
+    <updated>2026-11-18T09:50:00Z</updated>
+    <summary type="html">&lt;p&gt;A rundown of every confirmed detail about &lt;b&gt;GTA 6&lt;/b&gt;,
+    including the map and the release window.&lt;/p&gt;</summary>
+    <media:thumbnail url="https://assets.ign.com/thumbs/gta6-16x9.jpg"
+                     width="1280" height="720"/>
+  </entry>
+  <entry>
+    <title>Indie showcase returns next month</title>
+    <id>tag:ign.com,2026:news/12346</id>
+    <link rel="alternate" href="https://www.ign.com/articles/indie-showcase"/>
+    <published>2026-11-18T08:00:00Z</published>
+    <updated>2026-11-18T08:00:00Z</updated>
+    <summary type="html">A small indie showcase is coming back.</summary>
+  </entry>
+</feed>

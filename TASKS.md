@@ -20,9 +20,9 @@
 | Метрика | Значение |
 |---|---|
 | Всего задач | 12 |
-| done | 2 |
+| done | 3 |
 | in_progress | 0 |
-| todo | 9 |
+| todo | 8 |
 | blocked | 1 |
 
 ---
@@ -47,10 +47,10 @@
 ## Блок B. Источники и отбор
 
 ### T03 — RSS-парсер и планировщик опроса
-- **Статус:** `todo`
+- **Статус:** `done`
 - **Зависимости:** T02
-- **Исполнитель:** —
-- **Результат:** —
+- **Исполнитель:** агент T03 (DeepSeek/OpenCode), 2026-11-18
+- **Результат:** Созданы `bot/parsers/sources.py` (5 источников как данные: `FeedSource`, `SOURCES`, `SOURCES_BY_KEY`, `get_source` — VGC, IGN, Eurogamer, GamesRadar+, GameSpot) и `bot/parsers/rss.py`: `FeedItem`/`PollOutcome`; чистая функция `parse_feed` (байты ленты → записи, RSS 2.0 и Atom); `clean_text`/`make_lead` (очистка HTML, лид ~200 символов по границе слова); `extract_image_url` (enclosure → `media:content` → `media:thumbnail`, только URL); `build_client`/`fetch_feed` (свой User-Agent, таймаут из `settings.http_timeout_sec`, следование редиректам, 403/429 и `Retry-After`); `poll_source` (дедуп через `seen_urls` — `is_url_seen`/`mark_url_seen`, подписчик `on_item`); `jitter_delay` (`random.uniform` из настроек) и `poll_forever` (своя задача на источник, отмена по `asyncio.Event`, ошибки одного источника не роняют цикл); `poll_all_sources` для ручного прогона. Тесты: `tests/test_rss.py` (24 офлайн-теста, `httpx.MockTransport`), фикстуры `tests/fixtures/rss_vgc.xml`, `tests/fixtures/atom_ign.xml`, `tests/fixtures/broken_gamespot.xml`; в `tests/helpers.py` добавлен `make_settings` (Settings без чтения `.env`). **55 тестов проходит.**
 - **Что сделать:** источники из п. 2 ТЗ (VGC, IGN games, Eurogamer, GamesRadar+, GameSpot news), `feedparser`/`httpx`, User-Agent, таймаут, обработка ошибок и 429/403, опрос каждые 5–10 мин со случайным jitter, сохранение GUID/URL в `seen_urls`.
 
 ### T04 — Фильтр по ключевым словам
@@ -153,3 +153,4 @@
 | 2026-11-18 | OpenCode (агент-координатор) | Создан реестр, задачи T01–T12, правила для агентов |
 | 2026-11-18 | агент T01 (DeepSeek/OpenCode) | T01 → `done`, заполнен «Результат»; сводка приведена к фактическому числу задач (12, из них T12 `blocked`) |
 | 2026-11-18 | агент T02 + координатор (OpenCode) | T02 → `done`; 31 тест pytest; в T07 добавлена обработка 403 при неактивированном боте, в T10 — требование «в канале только новости» и флаг `PUBLISH_SILENT`; обновлён прогресс T12 (3 админа активировали бота) |
+| 2026-11-18 | агент T03 (DeepSeek/OpenCode) | T03 → `done`; RSS-парсер и опрос с jitter, 55 тестов pytest (24 новых) |
