@@ -10,6 +10,18 @@
 ## [Unreleased]
 
 ### Добавлено
+- **T05: дедупликация (3 ступени).** `bot/filters/dedup.py` — `normalize_title` (нижний регистр, «ё»→«е», тире и пунктуация → пробел), `similarity` на `difflib.SequenceMatcher(autojunk=False)`, `classify` по порогам `Settings` (≥0.85 дубль, 0.70–0.85 серая зона, ниже — новая), `DedupVerdict` с флагами состояния, чистая `compare_title` (выбирает самое похожее из истории) и `check_news`: ступень 1 — URL/GUID через `seen_urls`; ступени 2–3 — заголовки против `pending`+`published` за 7 дней (`Database.list_for_dedup`). Точные дубли пропускаются молча, серые зоны пишутся в `dedup_log` (оценка, `compared_post_id`) и вернутся в карточку пометкой (T08). Тесты: `tests/test_dedup.py` (21 тест). Файлы: `bot/filters/dedup.py`, `tests/test_dedup.py`, `TASKS.md`, `CHANGELOG.md`. Автор: агент T05 (DeepSeek/OpenCode). **109 тестов проходит.**
+
+### Решения
+- **T05: порядок вызова важен.** `check_news` рассчитан на вызов из `on_item` **до** `mark_url_seen` (так устроен парсер): ступень 1 честно ловит повторные URL. Если будущий код сначала пометит URL, ступень 1 будет срабатывать всегда — не менять порядок без необходимости.
+- **T05: в истории участвуют только `pending` и `published`.** `dropped` и посты старше 7 дней игнорируются — иначе отклонённые новости навсегда блокировали бы повторную публикацию.
+
+### Передача дальше (T06/T07)
+- `check_news(db, settings, title=..., lead=..., url=..., guid=..., now=...)` возвращает `DedupVerdict`; для нового поста `db.create_post(..., dedup_score=verdict.score, dedup_state=verdict.state)`.
+- Для серой зоны `verdict.matched_post` — пост, на который похожа новость; в карточке T08 показать «⚠️ похоже на уже опубликованное».
+- Фильтр по ключам (`bot.filters.keywords.is_relevant`) вызывать до дедупликации, чтобы не тратить сравнения на нерелевантные новости.
+
+### Добавлено
 - **T04: фильтр по ключевым словам.** `bot/filters/keywords.py` — нормализация текста (регистр, «ё»→«е», тире), шаблоны ключей с гибкими разделителями и границами слова (`GTA 6` находит `GTA-6`/`GTA6`/`GTA–6`, но не `GTA 60`, не `GTA Online` и не `RockstarGames`), `KeywordMatcher` с `find`/`matches`/`find_in`/`is_relevant`, кэш сопоставителей, обёртки `find_keywords`/`is_relevant`. В `bot/config.py` — `DEFAULT_NEWS_KEYWORDS` и разбор `NEWS_KEYWORDS` (запятая или точка с запятой, дедуп без учёта регистра, пустое значение → дефолты), новое поле `Settings.news_keywords`; `.env.example` дополнен переменной. Тесты: `tests/test_keywords.py` (33 теста: варианты написания, ложные срабатывания, поиск по лиду, пользовательские ключи, конфиг). Файлы: `bot/filters/keywords.py`, `bot/config.py`, `.env.example`, `tests/test_keywords.py`, `tests/helpers.py`. Автор: агент T04 (DeepSeek/OpenCode). **88 тестов проходит.**
 
 ### Решения
