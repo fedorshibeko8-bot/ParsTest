@@ -1,21 +1,22 @@
-"""Получить chat_id группы или канала через getUpdates.
+"""Получить chat_id и user_id через getUpdates.
 
-Зачем: узнать CHANNEL_ID для .env. Проще всего попросить бота самому сообщить,
-какие чаты он видит.
+Зачем: узнать CHANNEL_ID (группа/канал) и ADMIN_IDS (ваш Telegram ID),
+не прибегая к сторонним ботам.
 
 Порядок действий:
 1. Бот уже создан, токен вписан в .env (BOT_TOKEN=...).
 2. Бот добавлен в группу/канал.
-3. Отправьте в чат команду /start@имя_вашего_бота
-   (или любое сообщение, если у бота отключён privacy mode в BotFather).
+3. Отправьте в группу команду /start@имя_вашего_бота,
+   а боту в личку — /start (если нужен свой user_id).
 4. Запустите: .venv\\Scripts\\python.exe tools\\get_chat_id.py
 
-Скрипт опрашивает getUpdates и печатает ID найденных чатов.
-Выход: 0 — ID найден, 1 — не найден за отведённое время.
+Скрипт слушает getUpdates заданное время (по умолчанию 45 секунд) и печатает
+все найденные чаты и пользователей. Выход: 0 — что-то найдено, 1 — нет.
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 import time
 from pathlib import Path
@@ -24,8 +25,6 @@ import httpx
 from dotenv import dotenv_values
 
 ROOT = Path(__file__).resolve().parents[1]
-POLL_SECONDS = 3
-MAX_WAIT_SECONDS = 60
 
 
 def read_token() -> str:
@@ -41,13 +40,18 @@ def read_token() -> str:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Найти chat_id и user_id через getUpdates")
+    parser.add_argument("--wait", type=int, default=45, help="сколько секунд слушать (по умолчанию 45)")
+    args = parser.parse_args()
+
     token = read_token()
     api = f"https://api.telegram.org/bot{token}"
     offset = 0
-    deadline = time.monotonic() + MAX_WAIT_SECONDS
-    seen: dict[int, str] = {}
+    deadline = time.monotonic() + max(args.wait, 5)
+    chats: dict[int, str] = {}
+    users: dict[int, str] = {}
 
-    print("Жду обновлений. Напишите /start@имя_бота в нужной группе...")
+    print(f"Слушаю обновления {args.wait} с. Напишите /start@имя_бота в группе и /start боту в личку...")
     with httpx.Client(timeout=15.0) as client:
         while time.monotonic() < deadline:
             try:
@@ -63,27 +67,45 @@ def main() -> int:
 
             for upd in data.get("result", []):
                 offset = upd["update_id"] + 1
-                msg = upd.get("message") or upd.get("channel_post") or upd.get("edited_message")
+                msg = (
+                    upd.get("message")
+                    or upd.get("channel_post")
+                    or upd.get("edited_message")
+                    or upd.get("my_chat_member")
+                )
                 if not msg:
                     continue
-                chat = msg["chat"]
-                chat_id = chat["id"]
-                kind = chat.get("type", "?")
-                title = chat.get("title") or chat.get("username") or chat.get("first_name") or "-"
-                seen[chat_id] = f"{kind} | {title}"
-                print(f"  найдено: chat_id={chat_id}  тип={kind}  название={title}")
 
-            if seen:
-                break
+                chat = msg.get("chat")
+                if chat:
+                    chat_id = chat["id"]
+                    kind = chat.get("type", "?")
+                    title = chat.get("title") or chat.get("username") or chat.get("first_name") or "-"
+                    chats[chat_id] = f"{kind} | {title}"
+                    print(f"  чат: chat_id={chat_id}  тип={kind}  название={title}")
 
-    if not seen:
-        print("Ничего не найдено. Проверьте, что бот добавлен в чат и команда отправлена.")
+                sender = msg.get("from")
+                if sender and not sender.get("is_bot"):
+                    user_id = sender["id"]
+                    name = " ".join(filter(None, [sender.get("first_name"), sender.get("last_name")])).strip()
+                    users[user_id] = f"@{sender['username']}" if sender.get("username") else name or "-"
+                    print(f"  пользователь: user_id={user_id}  {users[user_id]}")
+
+    if not chats and not users:
+        print("Ничего не найдено. Бот добавлен в чат? Команда отправлена?")
         return 1
 
-    print("\nДля .env:")
-    for chat_id, desc in seen.items():
-        print(f"CHANNEL_ID={chat_id}    # {desc}")
-    print("\nЕсли это группа и в ней включены темы (topics), для публикации может понадобиться message_thread_id — уточните, если нужно.")
+    print("\n--- Для .env ---")
+    if chats:
+        for chat_id, desc in chats.items():
+            print(f"CHANNEL_ID={chat_id}    # {desc}")
+    if users:
+        ids = ",".join(str(uid) for uid in users)
+        print(f"ADMIN_IDS={ids}    # собственник(и) нажатий/сообщений")
+        for uid, desc in users.items():
+            print(f"    {uid} = {desc}")
+
+    print("\nЕсли у группы включены темы (topics), для публикации понадобится message_thread_id — скажите, если нужно.")
     return 0
 
 
