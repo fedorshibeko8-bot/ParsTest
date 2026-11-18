@@ -15,6 +15,9 @@
 - `docs/AGENTS.md` — правила работы ИИ-агентов над проектом.
 - **T01: скелет проекта и конфигурация.** Пакет `bot/` (`__init__.py`, `main.py`, `config.py`, `utils/logging.py`) и пустые заготовки `bot/parsers/`, `bot/filters/`, `bot/services/`, `bot/handlers/`; конфиг с валидацией и дефолтами, логирование в консоль и `logs/bot.log` (UTF-8, ротация в полночь, хранение 30 дней), точка входа с aiogram 3.32.0 и long polling, команды `/start` и `/ping` только для админов, корректный выход без трейсбека при отсутствии токена, `requirements.txt` с фиксированными версиями и `.env.example` с заглушками и русскими комментариями. Файлы: `bot/main.py`, `bot/config.py`, `bot/utils/logging.py`, `bot/__init__.py`, `bot/utils/__init__.py`, `bot/parsers/__init__.py`, `bot/filters/__init__.py`, `bot/services/__init__.py`, `bot/handlers/__init__.py`, `requirements.txt`, `.env.example`. Автор: агент-исполнитель T01 (DeepSeek/OpenCode).
 
+### Добавлено
+- **Утилита получения chat_id.** `tools/get_chat_id.py` опрашивает `getUpdates` и печатает ID групп/каналов, где бот видит сообщения — чтобы заполнить `CHANNEL_ID` без сторонних ботов. Автор: агент-координатор (OpenCode).
+
 ### Решения
 - **Деплой только на домашний ПК (Windows).** Пункт 12 ТЗ (systemd, Bothost, VPS) заменяется на `setup.bat` + `run.bat` и гайд `ЗАПУСК.md`.
 - **Ключей пока нет:** весь код пишется с заглушками и режимом `DRY_RUN=1`. Реальные значения — только в локальном `.env`, который в git не попадает.
