@@ -2,15 +2,17 @@
 
 Запуск: ``python -m bot.main`` (или через ``run.bat`` из задачи T11).
 
-Пока это каркас: диспетчер, логирование, чтение конфига и две служебные
-команды для админов (/start и /ping). Парсеры, очередь и карточки постов
-добавят следующие задачи. Без ``BOT_TOKEN`` бот не стартует, но завершается
-понятным сообщением и ненулевым кодом возврата, без трейсбека.
+Каркас T01 + очередь T07: диспетчер, логирование, БД, кнопка «Взять
+инициативу» и фоновое обслуживание (TTL 48 ч, тайм-аут перехвата 10 мин).
+Парсер и карточки постов добавят следующие задачи. Без ``BOT_TOKEN`` бот
+не стартует, но завершается понятным сообщением и ненулевым кодом возврата,
+без трейсбека.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import sys
 
@@ -20,6 +22,9 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
 from bot.config import ConfigError, Settings, load_settings
+from bot.db import Database
+from bot.handlers.queue import router as queue_router
+from bot.services.queue import maintenance_loop
 from bot.utils.logging import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -40,13 +45,16 @@ def _configure_console() -> None:
             pass
 
 
-def build_dispatcher(settings: Settings) -> Dispatcher:
-    """Собрать диспетчер с минимальными служебными командами.
+def build_dispatcher(settings: Settings, db: Database) -> Dispatcher:
+    """Собрать диспетчер: служебные команды и кнопку перехвата.
 
-    Полноценные хендлеры появятся в ``bot/handlers/`` (T07-T08).
+    ``db`` и ``settings`` кладутся в workflow data — aiogram подставит их
+    в хендлеры по именам аргументов.
     """
     dispatcher = Dispatcher()
     dispatcher["settings"] = settings
+    dispatcher["db"] = db
+    dispatcher.include_router(queue_router)
 
     async def deny(message: Message) -> None:
         user = message.from_user
@@ -63,7 +71,7 @@ def build_dispatcher(settings: Settings) -> Dispatcher:
             "Бот на связи.\n"
             f"Режим: {mode}.\n"
             f"Администраторов в конфиге: {len(settings.admin_ids)}.\n"
-            "Это каркас: новости и карточки появятся в следующих версиях."
+            "Уведомления о новостях и кнопка «Взять инициативу» уже работают."
         )
 
     @dispatcher.message(Command("ping"))
@@ -78,8 +86,16 @@ def build_dispatcher(settings: Settings) -> Dispatcher:
 
 async def run_polling(settings: Settings) -> None:
     """Подключиться к Telegram и слушать обновления (long polling)."""
+    db = Database.from_settings(settings)
+    await db.initialize()
+
     bot = Bot(token=settings.bot_token)
-    dispatcher = build_dispatcher(settings)
+    dispatcher = build_dispatcher(settings, db)
+    stop_event = asyncio.Event()
+    maintenance = asyncio.create_task(
+        maintenance_loop(bot, db, settings, stop_event=stop_event)
+    )
+
     logger.info("Запуск long polling, администраторов: %d", len(settings.admin_ids))
     try:
         await bot.delete_webhook(drop_pending_updates=True)
@@ -87,6 +103,11 @@ async def run_polling(settings: Settings) -> None:
             bot, allowed_updates=dispatcher.resolve_used_update_types()
         )
     finally:
+        stop_event.set()
+        maintenance.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await maintenance
+        await db.close()
         await bot.session.close()
         logger.info("Соединение с Telegram закрыто.")
 
