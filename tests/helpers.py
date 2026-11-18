@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable, TypeVar
 
-from bot.config import Settings
+from bot.config import DEFAULT_NEWS_KEYWORDS, Settings
 
 T0 = datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc)
 
@@ -36,6 +36,8 @@ def make_settings(**overrides: Any) -> Settings:
         "channel_id": "",
         "admin_ids": (1,),
         "dry_run": True,
+        # Отбор новостей
+        "news_keywords": DEFAULT_NEWS_KEYWORDS,
         # ИИ
         "gemini_api_key": "",
         "gemini_model": "gemini-test",

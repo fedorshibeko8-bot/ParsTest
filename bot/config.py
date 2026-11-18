@@ -29,6 +29,15 @@ _TRUE_VALUES = {"1", "true", "yes", "y", "on", "да"}
 _FALSE_VALUES = {"0", "false", "no", "n", "off", "нет"}
 _LOG_LEVELS = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}
 
+# Ключевые слова отбора новостей по умолчанию (п. 3 ТЗ).
+# Меняются переменной NEWS_KEYWORDS — без правки кода.
+DEFAULT_NEWS_KEYWORDS: tuple[str, ...] = (
+    "GTA 6",
+    "GTA VI",
+    "Grand Theft Auto",
+    "Rockstar",
+)
+
 # Признаки незаполненной заглушки из ``.env.example``.
 _PLACEHOLDER_MARKERS = ("PASTE", "ЗАМЕНИ", "ЗАМЕНИТЬ", "XXXX", "<", ">")
 
@@ -86,6 +95,39 @@ def _split_admins(raw: str, errors: list[str]) -> tuple[int, ...]:
     if not admins and not any(message.startswith("ADMIN_IDS") for message in errors):
         errors.append("ADMIN_IDS: после разбора не осталось ни одного ID.")
     return tuple(admins)
+
+
+def _split_keywords(
+    raw: str, default: tuple[str, ...], errors: list[str]
+) -> tuple[str, ...]:
+    """Разобрать ``NEWS_KEYWORDS`` (ключи через запятую или точку с запятой).
+
+    Пустое значение — штатный случай: берутся ключи по умолчанию из
+    :data:`DEFAULT_NEWS_KEYWORDS`. Повторы (без учёта регистра) убираются,
+    лишние пробелы внутри ключа схлопываются.
+    """
+    text = raw.strip()
+    if not text:
+        return default
+
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for chunk in re.split(r"[,;]", text):
+        keyword = " ".join(chunk.split())
+        if not keyword:
+            continue
+        key = keyword.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        keywords.append(keyword)
+
+    if not keywords:
+        errors.append(
+            "NEWS_KEYWORDS: после разбора не осталось ни одного ключевого слова."
+        )
+        return default
+    return tuple(keywords)
 
 
 def _resolve_path(raw: str, default: str) -> Path:
@@ -166,6 +208,9 @@ class Settings:
     channel_id: str
     admin_ids: tuple[int, ...]
     dry_run: bool
+
+    # Отбор новостей (T04)
+    news_keywords: tuple[str, ...]
 
     # ИИ (нужны только вне DRY_RUN)
     gemini_api_key: str
@@ -269,6 +314,11 @@ def load_settings(env_path: Path | None = None) -> Settings:
     # --- Админы ------------------------------------------------------------
     admin_ids = _split_admins(reader.text("ADMIN_IDS"), errors)
 
+    # --- Отбор новостей по ключам -----------------------------------------
+    news_keywords = _split_keywords(
+        reader.text("NEWS_KEYWORDS"), DEFAULT_NEWS_KEYWORDS, errors
+    )
+
     # --- Ключи ИИ: обязательны вне DRY_RUN --------------------------------
     gemini_api_key = _clean_optional(reader.text("GEMINI_API_KEY"))
     groq_api_key = _clean_optional(reader.text("GROQ_API_KEY"))
@@ -313,6 +363,7 @@ def load_settings(env_path: Path | None = None) -> Settings:
         channel_id=channel_id,
         admin_ids=admin_ids,
         dry_run=dry_run,
+        news_keywords=news_keywords,
         gemini_api_key=gemini_api_key,
         gemini_model=reader.text("GEMINI_MODEL", "gemini-2.5-flash-lite"),
         groq_api_key=groq_api_key,

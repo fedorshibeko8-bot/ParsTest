@@ -10,6 +10,18 @@
 ## [Unreleased]
 
 ### Добавлено
+- **T04: фильтр по ключевым словам.** `bot/filters/keywords.py` — нормализация текста (регистр, «ё»→«е», тире), шаблоны ключей с гибкими разделителями и границами слова (`GTA 6` находит `GTA-6`/`GTA6`/`GTA–6`, но не `GTA 60`, не `GTA Online` и не `RockstarGames`), `KeywordMatcher` с `find`/`matches`/`find_in`/`is_relevant`, кэш сопоставителей, обёртки `find_keywords`/`is_relevant`. В `bot/config.py` — `DEFAULT_NEWS_KEYWORDS` и разбор `NEWS_KEYWORDS` (запятая или точка с запятой, дедуп без учёта регистра, пустое значение → дефолты), новое поле `Settings.news_keywords`; `.env.example` дополнен переменной. Тесты: `tests/test_keywords.py` (33 теста: варианты написания, ложные срабатывания, поиск по лиду, пользовательские ключи, конфиг). Файлы: `bot/filters/keywords.py`, `bot/config.py`, `.env.example`, `tests/test_keywords.py`, `tests/helpers.py`. Автор: агент T04 (DeepSeek/OpenCode). **88 тестов проходит.**
+
+### Решения
+- **T04: ключи — из `Settings`, а не из кода.** Список задаётся переменной `NEWS_KEYWORDS`, по умолчанию «GTA 6», «GTA VI», «Grand Theft Auto», «Rockstar». Варианты написания и границы слова закрывает шаблон, поэтому дублировать «GTA-6»/«GTA6» в списке не нужно.
+- **T04: «мягкие» границы слова.** Ключ не срабатывает внутри другого слова или числа (`GTA 60`, `RockstarGames`), но срабатывает рядом с пунктуацией и притяжательным `'s` (`Rockstar's`).
+
+### Передача дальше (T05)
+- Фильтр готов: `is_relevant(title, lead, settings.news_keywords)` или `build_matcher(settings.news_keywords)`. Ничего не кэшируйте вручную — `build_matcher` уже кэширован.
+- `feed_item.title` и `feed_item.lead` уже очищены от HTML; повторно чистить не нужно.
+- Дедупликация (T05) должна вызываться **после** фильтра: сначала отсекаем нерелевантное, потом сравниваем заголовки с pending/published за 7 дней.
+
+### Добавлено
 - `TASKS.md` — реестр задач T01–T12 со статусами, зависимостями и правилами обновления.
 - `CHANGELOG.md` — этот журнал.
 - `docs/AGENTS.md` — правила работы ИИ-агентов над проектом.
