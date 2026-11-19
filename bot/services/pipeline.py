@@ -247,6 +247,9 @@ async def poll_news_loop(
     loop = asyncio.get_running_loop()
 
     enabled = [source for source in SOURCES if source.enabled]
+    if not enabled:
+        logger.warning("Нет включённых RSS-источников — опрос не запущен.")
+        return
     # Первый разбор каждой ленты — это её история, а не новости. Берём
     # не больше видимой очереди, поделив её между источниками, чтобы один
     # сайт не занял все места своими старыми гайдами.

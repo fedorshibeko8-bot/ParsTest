@@ -415,3 +415,17 @@ def test_retry_after_snoozes_only_that_source(
     # 429 от VGC не останавливает остальные ленты.
     assert "vgc" not in calls[1]
     assert {"ign", "eurogamer", "gamesradar", "gamespot"} <= calls[1]
+
+
+def test_loop_without_enabled_sources_returns(
+    db, settings, monkeypatch
+) -> None:
+    monkeypatch.setattr(pipeline, "SOURCES", ())
+
+    async def scenario() -> None:
+        await asyncio.wait_for(
+            pipeline.poll_news_loop(FakeBot(), db, settings, stop_event=asyncio.Event()),
+            timeout=5,
+        )
+
+    run(scenario())
