@@ -4,9 +4,11 @@
 проверяется по владельцу в БД, затем действие сбрасывает 10-минутный
 тайм-аут (``register_owner_action``) и возвращает обновлённый предпросмотр.
 
-Публикация и ИИ пока отвечают заглушкой — их обработчики появятся в T09/T10.
-Всё остальное (правка текста, замена/удаление картинки, снятие, источник)
-работает и не отправляет в канал ничего.
+Рерайт (кнопка «Доработать с ИИ») выполняет ``bot.services.rewrite``:
+провайдеры, промпт и лимиты длины живут там, а хендлер только обновляет
+карточку и сообщает админу о замечаниях. Публикация пока отвечает
+заглушкой — её обработчик появится в T10. Ни одно действие меню не
+отправляет в канал ничего.
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ from bot.services.cards import (
 )
 from bot.services.images import ImageError, remove_image_file, save_image_bytes
 from bot.services.queue import admin_display_name, register_owner_action
+from bot.services.rewrite import RewriteError, rewrite_post
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +127,7 @@ async def handle_post_action(
         return
 
     if action == ACTION_AI:
-        await callback.answer("Рерайт появится в следующей задаче (T09).", show_alert=True)
+        await _rewrite_post(callback, bot, db, settings, post)
         return
 
     if action == ACTION_EDIT:
@@ -161,6 +164,38 @@ async def handle_post_action(
 
     logger.warning("Неизвестное действие карточки %r для поста #%s", action, post.id)
     await callback.answer("Неизвестное действие.", show_alert=True)
+
+
+async def _rewrite_post(
+    callback: CallbackQuery,
+    bot: Bot,
+    db: Database,
+    settings: Settings,
+    post: Post,
+) -> None:
+    """Переписать пост через ИИ и показать обновлённый черновик."""
+    user = callback.from_user
+    if user is None:  # pragma: no cover - проверено в _require_owned
+        return
+
+    await callback.answer("Переписываю…")
+    try:
+        outcome = await rewrite_post(db, settings, post, actor_id=user.id)
+    except RewriteError as exc:
+        logger.warning("Рерайт поста #%s не удался: %s", post.id, exc)
+        if isinstance(callback.message, Message):
+            await callback.message.answer(f"Не удалось переписать: {exc}")
+        return
+
+    await show_card_for_callback(callback, bot, outcome.post)
+    if not isinstance(callback.message, Message):
+        return
+    if outcome.result.warnings:
+        await callback.message.answer(
+            "Замечания к тексту: " + "; ".join(outcome.result.warnings)
+        )
+    if outcome.hint:
+        await callback.message.answer(outcome.hint)
 
 
 async def _drop_post(callback: CallbackQuery, db: Database, post: Post) -> None:
