@@ -36,6 +36,7 @@ def make_settings(**overrides: Any) -> Settings:
         "channel_id": "",
         "admin_ids": (1,),
         "dry_run": True,
+        "publish_silent": False,
         # Отбор новостей
         "news_keywords": DEFAULT_NEWS_KEYWORDS,
         # ИИ

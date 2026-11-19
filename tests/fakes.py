@@ -43,6 +43,7 @@ class FakeBot:
         text: str,
         parse_mode: Any = None,
         reply_markup: Any = None,
+        disable_notification: bool | None = None,
         **kwargs: Any,
     ) -> bool:
         """Обёртка над ``Bot.send_message`` (сервис вызывает её напрямую)."""
@@ -52,6 +53,7 @@ class FakeBot:
                 text=text,
                 parse_mode=parse_mode,
                 reply_markup=reply_markup,
+                disable_notification=disable_notification,
             )
         )
         return True
@@ -63,6 +65,7 @@ class FakeBot:
         caption: str | None = None,
         parse_mode: Any = None,
         reply_markup: Any = None,
+        disable_notification: bool | None = None,
         **kwargs: Any,
     ) -> bool:
         """Обёртка над ``Bot.send_photo``."""
@@ -73,6 +76,7 @@ class FakeBot:
                 caption=caption,
                 parse_mode=parse_mode,
                 reply_markup=reply_markup,
+                disable_notification=disable_notification,
             )
         )
         return True

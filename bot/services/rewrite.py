@@ -30,6 +30,15 @@ import httpx
 from bot.config import Settings
 from bot.db import Database
 from bot.models import DraftOrigin, Post
+from bot.services.format import (
+    BODY_MAX,
+    BODY_MIN,
+    TITLE_MAX,
+    TITLE_MIN,
+    TOTAL_MAX,
+    clean_text,
+    one_line,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,12 +58,6 @@ GROQ_ENDPOINT: Final[str] = "https://api.groq.com/openai/v1/chat/completions"
 PROVIDER_GEMINI: Final[str] = "gemini"
 PROVIDER_GROQ: Final[str] = "groq"
 PROVIDER_DRY_RUN: Final[str] = "dry_run"
-
-TITLE_MIN: Final[int] = 40
-TITLE_MAX: Final[int] = 70
-BODY_MIN: Final[int] = 120
-BODY_MAX: Final[int] = 350
-TOTAL_MAX: Final[int] = 420
 
 LLM_TIMEOUT_SEC: Final[float] = 45.0
 MAX_OUTPUT_TOKENS: Final[int] = 1024
@@ -159,24 +162,6 @@ def build_prompt(post: Post) -> str:
 # Разбор и нормализация ответа
 # ----------------------------------------------------------------------
 _FENCE_RE = re.compile(r"^\s*```(?:json)?|```\s*$", re.MULTILINE)
-_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
-_TAG_RE = re.compile(r"(?<!\w)#\w+")
-_MENTION_RE = re.compile(r"(?<!\w)@[A-Za-z0-9_]{4,}")
-
-
-def _one_line(value: object) -> str:
-    """Схлопнуть пробелы и снять кавычки по краям."""
-    text = " ".join(str(value or "").split())
-    return text.strip(" \"'«»“”„")
-
-
-def _clean(text: object) -> str:
-    """Убрать запрещённое в публикации: ссылки, хэштеги, упоминания."""
-    value = " ".join(str(text or "").split())
-    value = _URL_RE.sub("", value)
-    value = _TAG_RE.sub("", value)
-    value = _MENTION_RE.sub("", value)
-    return " ".join(value.split()).strip(" -—–,;")
 
 
 def _load_json(raw: str) -> dict | None:
@@ -203,8 +188,8 @@ def parse_response(raw: str) -> tuple[str, str]:
     """
     data = _load_json(raw)
     if data is not None:
-        title = _one_line(_clean(data.get("title")))
-        body = _clean(data.get("body"))
+        title = one_line(clean_text(data.get("title")))
+        body = clean_text(data.get("body"))
         if title and body:
             return title, body
         if "title" in data or "body" in data:
@@ -212,8 +197,8 @@ def parse_response(raw: str) -> tuple[str, str]:
 
     lines = [line.strip() for line in _FENCE_RE.sub("", raw).splitlines() if line.strip()]
     if len(lines) >= 2:
-        title = _one_line(_clean(lines[0]))
-        body = _clean(" ".join(lines[1:]))
+        title = one_line(clean_text(lines[0]))
+        body = clean_text(" ".join(lines[1:]))
         if title and body:
             return title, body
 
@@ -222,7 +207,7 @@ def parse_response(raw: str) -> tuple[str, str]:
 
 def fit_title(title: str) -> str:
     """Уложить заголовок в 70 символов по границе слова."""
-    text = _one_line(title)
+    text = one_line(title)
     if len(text) <= TITLE_MAX:
         return text
     cut = text[:TITLE_MAX]
@@ -234,7 +219,7 @@ def fit_title(title: str) -> str:
 
 def fit_body(body: str) -> str:
     """Уложить тело в 350 символов: сначала по концу предложения."""
-    text = _one_line(body)
+    text = one_line(body)
     if len(text) <= BODY_MAX:
         return text
     cut = text[:BODY_MAX]

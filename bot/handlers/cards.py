@@ -6,9 +6,9 @@
 
 Рерайт (кнопка «Доработать с ИИ») выполняет ``bot.services.rewrite``:
 провайдеры, промпт и лимиты длины живут там, а хендлер только обновляет
-карточку и сообщает админу о замечаниях. Публикация пока отвечает
-заглушкой — её обработчик появится в T10. Ни одно действие меню не
-отправляет в канал ничего.
+карточку и сообщает админу о замечаниях. Публикация (кнопка «Опубликовать»)
+вызывает ``bot.services.publisher`` — единственный модуль, который знает
+``CHANNEL_ID``. Служебные сообщения уходят только в личку админам.
 """
 
 from __future__ import annotations
@@ -40,6 +40,7 @@ from bot.services.cards import (
     show_card_for_callback,
 )
 from bot.services.images import ImageError, remove_image_file, save_image_bytes
+from bot.services.publisher import PublishError, publish_post
 from bot.services.queue import admin_display_name, register_owner_action
 from bot.services.rewrite import RewriteError, rewrite_post
 
@@ -123,7 +124,7 @@ async def handle_post_action(
     await register_owner_action(db, post.id, actor_id=callback.from_user.id)
 
     if action == ACTION_PUBLISH:
-        await callback.answer("Публикация появится в следующей задаче (T10).", show_alert=True)
+        await _publish_post(callback, bot, db, settings, post)
         return
 
     if action == ACTION_AI:
@@ -196,6 +197,61 @@ async def _rewrite_post(
         )
     if outcome.hint:
         await callback.message.answer(outcome.hint)
+
+
+async def _publish_post(
+    callback: CallbackQuery,
+    bot: Bot,
+    db: Database,
+    settings: Settings,
+    post: Post,
+) -> None:
+    """Опубликовать пост в канал и показать итог владельцу."""
+    user = callback.from_user
+    if user is None:  # pragma: no cover - проверено в _require_owned
+        return
+
+    await callback.answer("Публикую…")
+    try:
+        publication = await publish_post(
+            db, settings, post, actor_id=user.id, bot=bot
+        )
+    except PublishError as exc:
+        logger.warning("Публикация поста #%s не удалась: %s", post.id, exc)
+        if isinstance(callback.message, Message):
+            hint = (
+                "\n\nОтредактируйте текст или нажмите «Доработать с ИИ»."
+                if exc.problems
+                else ""
+            )
+            await callback.message.answer(f"Не удалось опубликовать: {exc}{hint}")
+        return
+
+    message = callback.message if isinstance(callback.message, Message) else None
+    if publication.dry_run:
+        logger.info("Пост #%s: публикация сымитирована (DRY_RUN)", publication.post.id)
+        if message is not None:
+            await message.answer(
+                f"DRY_RUN: пост #{publication.post.id} помечен опубликованным, "
+                "в канал ничего не отправлено. Проверьте текст карточки."
+            )
+
+    # Карточка больше не нужна: меню убираем, чтобы пост нельзя было
+    # опубликовать второй раз.
+    if message is None:
+        return
+    note = (
+        f"✅ Пост #{publication.post.id} опубликован."
+        if not publication.dry_run
+        else f"✅ Пост #{publication.post.id} опубликован (DRY_RUN, без отправки)."
+    )
+    try:
+        if message.photo:
+            await message.edit_caption(caption=note)
+        else:
+            await message.edit_text(text=note)
+    except Exception:
+        logger.debug("Не удалось обновить карточку после публикации #%s", post.id)
 
 
 async def _drop_post(callback: CallbackQuery, db: Database, post: Post) -> None:

@@ -242,6 +242,9 @@ class Settings:
     dedup_duplicate_threshold: float
     dedup_gray_zone_threshold: float
 
+    # Публикация (T10): тихий режим — без уведомления подписчиков
+    publish_silent: bool = False
+
     warnings: tuple[str, ...] = field(default_factory=tuple)
 
     def is_admin(self, user_id: int | None) -> bool:
@@ -396,5 +399,6 @@ def load_settings(env_path: Path | None = None) -> Settings:
         queue_visible_limit=reader.integer("QUEUE_VISIBLE_LIMIT", 10, minimum=1),
         dedup_duplicate_threshold=dedup_duplicate_threshold,
         dedup_gray_zone_threshold=dedup_gray_zone_threshold,
+        publish_silent=reader.flag("PUBLISH_SILENT", default=False),
         warnings=tuple(reader.warnings),
     )
