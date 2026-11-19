@@ -27,6 +27,8 @@ TOTAL_MAX: Final[int] = 420
 _URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 _TAG_RE = re.compile(r"(?<!\w)#\w+")
 _MENTION_RE = re.compile(r"(?<!\w)@[A-Za-z0-9_]{4,}")
+_SENTENCE_END_RE = re.compile(r"[.!?](?=\s|$)")
+_TRAILING_ELLIPSIS_RE = re.compile(r"\s*(?:\.{3,}|…)+\s*$")
 
 
 def one_line(value: object) -> str:
@@ -49,6 +51,55 @@ def clean_text(value: object) -> str:
     return " ".join(text.split()).strip(" -—–,;")
 
 
+def last_complete_sentence(text: str) -> str:
+    """Оставить текст до конца последнего законченного предложения.
+
+    Если законченного предложения нет, возвращается пустая строка: обрывать
+    фразу многоточием запрещено (требование владельца).
+    """
+    text = " ".join(str(text or "").split())
+    ends = [match.end() for match in _SENTENCE_END_RE.finditer(text)]
+    return text[: ends[-1]].strip() if ends else ""
+
+
+def trim_to_word(text: str) -> str:
+    """Отступить до начала последнего слова; многоточие не добавляется."""
+    text = " ".join(str(text or "").split()).rstrip()
+    space = text.rfind(" ")
+    if space <= 0:
+        return text
+    return text[:space].rstrip(" ,;:—–-")
+
+
+def cut_words(text: str, limit: int) -> str:
+    """Обрезать заголовок по границе слова без многоточия."""
+    if limit <= 0:
+        return ""
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= limit else trim_to_word(text[:limit])
+
+
+def cut_sentences(text: str, limit: int) -> str:
+    """Обрезать текст по концу полного предложения, без многоточия.
+
+    Если ни одно предложение не укладывается в лимит, возвращается пустая
+    строка — незавершённую фразу показывать нельзя.
+    """
+    if limit <= 0:
+        return ""
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= limit else last_complete_sentence(text[:limit])
+
+
+def remove_trailing_ellipsis(text: str) -> str:
+    """Убрать многоточие в конце и отступить к последнему целому предложению."""
+    text = " ".join(str(text or "").split())
+    cleaned = _TRAILING_ELLIPSIS_RE.sub("", text)
+    if cleaned == text:
+        return text
+    return last_complete_sentence(cleaned) or cleaned
+
+
 def post_lengths(title: str, body: str) -> tuple[int, int, int]:
     """Длины ``(заголовок, тело, итого)`` в символах без HTML."""
     title_len = len(title)
@@ -59,9 +110,8 @@ def post_lengths(title: str, body: str) -> tuple[int, int, int]:
 def length_problems(title: str, body: str) -> tuple[str, ...]:
     """Что в посте не соответствует ТЗ; пустой кортеж — всё в порядке.
 
-    Публикация вызывает эту проверку, чтобы в канал не ушёл пост,
-    который не проходит требования по длине: удлинять или сокращать
-    «на лету» нельзя без потери смысла, поэтому решение за админом.
+    Проверка остаётся вспомогательной (подсказки при рерайте): публикация
+    по кнопке больше не блокируется несоответствием длинам — решение за админом.
     """
     title_len, body_len, total = post_lengths(title, body)
     problems: list[str] = []
@@ -88,7 +138,12 @@ __all__ = [
     "TOTAL_MAX",
     "TOTAL_MIN",
     "clean_text",
+    "cut_sentences",
+    "cut_words",
+    "last_complete_sentence",
     "length_problems",
     "one_line",
     "post_lengths",
+    "remove_trailing_ellipsis",
+    "trim_to_word",
 ]

@@ -155,8 +155,22 @@ def test_card_text_is_cut_to_caption_limit(make_post) -> None:
     post = make_post(title_original="Заголовок", lead="Я" * 5000)
     text = card_text(post)
     assert caption_len(text) <= CARD_CAPTION_LIMIT
-    assert text.endswith("…")
+    assert "…" not in text
+    # Ни одного законченного предложения в лиде нет — незавершённый
+    # обрыв вообще не показывается.
+    assert text == "<b>Заголовок</b>"
     assert text.count("<b>") == 1 and text.count("</b>") == 1
+
+
+def test_card_text_cuts_body_at_complete_sentence(make_post) -> None:
+    post = make_post(
+        title_original="Заголовок",
+        lead="Игроки получили обновление. " * 100,
+    )
+    text = card_text(post)
+    assert caption_len(text) <= CARD_CAPTION_LIMIT
+    assert "…" not in text
+    assert text.endswith(".")
 
 
 def test_card_text_counts_emoji_as_two_units(make_post) -> None:

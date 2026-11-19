@@ -4,7 +4,7 @@
 
 * в канал уходит только сам пост (заголовок + тело), без служебных
   сообщений, ссылок, хэштегов и подписи канала;
-* пост не публикуется, если текст не соответствует ТЗ по длине;
+* кнопка публикует пост независимо от соответствия текста длинам из ТЗ;
 * при отказе Telegram пост остаётся за админом, а не теряется.
 """
 
@@ -34,6 +34,7 @@ from bot.services.format import (
     TITLE_MIN,
     TOTAL_MAX,
     clean_text,
+    cut_words,
     length_problems,
     post_lengths,
 )
@@ -190,46 +191,56 @@ def test_build_publication_strips_forbidden_elements(make_post) -> None:
     assert "@" not in text
 
 
-@pytest.mark.parametrize(
-    "overrides",
-    [
-        {"title_original": ""},
-        {"lead": ""},
-        {"title_original": "", "lead": ""},
-    ],
-)
-def test_build_publication_rejects_empty_text(make_post, overrides) -> None:
-    post = ready_post(make_post, **overrides)
+def test_build_publication_rejects_fully_empty_text(make_post) -> None:
+    post = make_post(title_original="", lead="")
 
-    with pytest.raises(PublishError):
+    with pytest.raises(PublishError, match="пустой"):
         build_publication(post)
+
+
+def test_build_publication_uses_body_as_title_when_title_missing(make_post) -> None:
+    post = ready_post(make_post, title_original="", lead=BODY)
+
+    title, body, _text = build_publication(post)
+
+    assert title == cut_words(BODY, TITLE_MAX)
+    assert body == BODY
+    assert "…" not in title
+
+
+def test_build_publication_uses_title_as_body_when_lead_missing(make_post) -> None:
+    post = ready_post(make_post, lead="")
+
+    title, body, text = build_publication(post)
+
+    assert (title, body) == (TITLE, TITLE)
+    assert text == f"<b>{TITLE}</b>\n\n{TITLE}"
 
 
 @pytest.mark.parametrize(
     "title",
     ["Короткий заголовок", "Я" * (TITLE_MAX + 1)],
 )
-def test_build_publication_rejects_bad_title(make_post, title) -> None:
+def test_build_publication_accepts_any_title_length(make_post, title) -> None:
     post = ready_post(make_post, title_original=title)
 
-    with pytest.raises(PublishError) as excinfo:
-        build_publication(post)
+    built_title, _body, text = build_publication(post)
 
-    assert excinfo.value.problems
-    assert any("заголовок" in problem for problem in excinfo.value.problems)
+    assert built_title == title
+    assert f"<b>{title}</b>" in text
 
 
 @pytest.mark.parametrize(
     "body",
     ["Слишком коротко.", "Я" * (BODY_MAX + 1)],
 )
-def test_build_publication_rejects_bad_body(make_post, body) -> None:
+def test_build_publication_accepts_any_body_length(make_post, body) -> None:
     post = ready_post(make_post, lead=body)
 
-    with pytest.raises(PublishError) as excinfo:
-        build_publication(post)
+    _title, built_body, text = build_publication(post)
 
-    assert any("текст" in problem for problem in excinfo.value.problems)
+    assert built_body == body
+    assert text.endswith(body)
 
 
 # ----------------------------------------------------------------------
@@ -357,36 +368,40 @@ def test_publish_rejects_pending_post(db, make_post, live_settings) -> None:
     assert bot.methods == []
 
 
-def test_publish_keeps_post_when_text_is_short(db, make_post, live_settings) -> None:
+def test_publish_accepts_short_text(db, make_post, live_settings) -> None:
     post = take(db, make_post(title_original="Коротко", lead="Мало текста."))
     bot = FakeBot()
 
-    with pytest.raises(PublishError) as excinfo:
-        run(publish_post(db, live_settings, post, actor_id=1, bot=bot))
+    publication = run(
+        publish_post(db, live_settings, post, actor_id=1, bot=bot)
+    )
 
-    assert excinfo.value.problems
-    assert bot.methods == []
-    assert run(db.get_post(post.id)).status is PostStatus.INTERCEPTED
+    assert bot.of(SendMessage)
+    assert publication.post.status is PostStatus.PUBLISHED
 
 
-def test_publish_with_photo_rejects_overlong_caption(
+def test_publish_with_overlong_caption_sends_text_only(
     db, make_post, live_settings
 ) -> None:
     saved = run(save_image_bytes(PNG, live_settings))
-    # Текст проходит лимиты (300 символов), но после экранирования
-    # «&» → «&amp;» подпись уже не влезает в 1024 единицы Telegram.
+    # После экранирования «&» → «&amp;» подпись не влезает в 1024 единицы.
+    # Это лимит Telegram, а не ТЗ: пост всё равно уходит в канал текстом.
     post = take(
         db,
-        ready_post(make_post, title_original=TITLE, lead="&" * 300, image_path=str(saved.path)),
+        ready_post(
+            make_post,
+            title_original=TITLE,
+            lead="&" * 300,
+            image_path=str(saved.path),
+        ),
     )
     bot = FakeBot()
 
-    with pytest.raises(PublishError) as excinfo:
-        run(publish_post(db, live_settings, post, actor_id=1, bot=bot))
+    publication = run(publish_post(db, live_settings, post, actor_id=1, bot=bot))
 
-    assert "подпись" in str(excinfo.value)
-    assert bot.methods == []
-    assert run(db.get_post(post.id)).status is PostStatus.INTERCEPTED
+    assert bot.of(SendMessage)
+    assert not bot.of(SendPhoto)
+    assert publication.post.status is PostStatus.PUBLISHED
 
 
 def test_publish_without_photo_allows_many_ampersands(
@@ -489,7 +504,7 @@ def test_publish_button_with_photo_edits_caption(db, make_post, dry_settings) ->
     assert run(db.get_post(post.id)).status is PostStatus.PUBLISHED
 
 
-def test_publish_button_reports_bad_text(db, make_post, dry_settings) -> None:
+def test_publish_button_accepts_short_text(db, make_post, dry_settings) -> None:
     post = take(db, make_post(title_original="Коротко", lead="Мало."))
     bot = FakeBot()
     callback = make_callback(
@@ -498,8 +513,8 @@ def test_publish_button_reports_bad_text(db, make_post, dry_settings) -> None:
 
     run(handle_post_action(callback, bot, db, dry_settings, FakeState()))
 
-    assert any("Не удалось опубликовать" in text for text in bot.texts)
-    assert run(db.get_post(post.id)).status is PostStatus.INTERCEPTED
+    assert not any("Не удалось опубликовать" in text for text in bot.texts)
+    assert run(db.get_post(post.id)).status is PostStatus.PUBLISHED
 
 
 def test_publish_button_second_click_is_refused(db, make_post, dry_settings) -> None:

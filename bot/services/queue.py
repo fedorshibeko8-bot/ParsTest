@@ -41,6 +41,7 @@ from aiogram.types import (
 from bot.config import Settings
 from bot.db import Database, InvalidTransitionError, OwnerBusyError, PostNotFoundError
 from bot.models import Post
+from bot.services.format import cut_words
 
 logger = logging.getLogger(__name__)
 
@@ -173,16 +174,9 @@ def post_headline(post: Post, *, limit: int = 160) -> str:
     Берётся оригинальный заголовок: до перехвата перевода ещё нет, а
     админу достаточно понять тему. Перевод появится в карточке после
     нажатия «Взять инициативу». Длинный заголовок обрезается по границе
-    слова, чтобы уведомление оставалось компактным.
+    слова, чтобы уведомление оставалось компактным и без многоточия.
     """
-    title = " ".join((post.title_original or "").split())
-    if len(title) <= limit:
-        return title
-    cut = title[:limit]
-    space = cut.rfind(" ")
-    if space > limit // 2:
-        cut = cut[:space]
-    return cut.rstrip(" ,;:—–-") + "…"
+    return cut_words(post.title_original, limit)
 
 
 async def announce_posts(

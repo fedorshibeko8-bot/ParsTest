@@ -196,9 +196,9 @@ def test_post_headline_cuts_long_titles(make_post) -> None:
 
     headline = post_headline(post, limit=40)
 
-    assert len(headline) <= 41  # 40 символов + многоточие
-    assert headline.endswith("…")
-    assert not headline.endswith(" …")
+    assert len(headline) <= 40
+    assert "…" not in headline
+    assert not headline.endswith(" ")
 
 
 def test_announce_limits_to_visible_posts(db, make_post) -> None:
@@ -548,6 +548,48 @@ def _translation_settings() -> Settings:
     return make_settings(admin_ids=(1,), dry_run=False, gemini_api_key="test-key")
 
 
+def test_handler_take_translates_also_in_dry_run(db, make_post, monkeypatch) -> None:
+    """DRY_RUN запрещает посты в канале, но не перевод в карточке."""
+    from bot.handlers import queue as queue_handler
+
+    post = make_post(
+        title_original="GTA 6 will launch in 2027",
+        lead="Rockstar confirmed the release window.",
+    )
+    bot = fakes.FakeBot()
+    callback = fakes.make_callback(
+        bot, take_callback(post.id), fakes.make_message(bot, chat_id=10)
+    )
+    calls: list[int] = []
+
+    async def fake_rewrite(database, settings, current, *, actor_id):
+        calls.append(current.id)
+        title, body = "GTA 6 выйдет в 2027 году", "Rockstar подтвердила окно релиза."
+        await database.add_draft_version(current.id, title=title, body=body)
+        updated = await database.get_post(current.id)
+        return RewriteOutcome(
+            post=updated,
+            result=RewriteResult(title=title, body=body, provider="dry_run"),
+            round_no=1,
+        )
+
+    monkeypatch.setattr(queue_handler, "rewrite_post", fake_rewrite)
+
+    run(
+        queue_handler.handle_take(
+            callback, bot, db, make_settings(admin_ids=(1,), dry_run=True)
+        )
+    )
+
+    assert calls == [post.id]
+    stored = run(db.get_post(post.id))
+    assert stored is not None
+    assert stored.draft_title == "GTA 6 выйдет в 2027 году"
+    edits = bot.of(EditMessageText)
+    assert edits
+    assert "will launch" not in (edits[-1].text or "")
+
+
 def test_handler_take_translates_post_after_taking(db, make_post, monkeypatch) -> None:
     from bot.handlers import queue as queue_handler
 
@@ -622,7 +664,8 @@ def test_handler_take_keeps_original_when_translation_fails(
 
     edits = bot.of(EditMessageText)
     assert edits and "GTA 6 will launch in 2027" in (edits[-1].text or "")
-    assert any("перевести не удалось" in text for text in bot.texts)
+    assert any("перевод на русский не выполнен" in text for text in bot.texts)
+    assert any("нельзя публиковать" in text for text in bot.texts)
 
 
 def test_handler_take_does_not_translate_twice(db, make_post, monkeypatch) -> None:

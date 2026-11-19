@@ -6,8 +6,9 @@
 все действия меню.
 
 Ограничения Telegram: подпись к фото — 1024 символа. Длинный текст
-обрезается по границе символа, HTML-теги не рвутся (экранирование и
-обрезка считаются вместе).
+обрезается только по концу законченного предложения (заголовок — по границе
+слова), без многоточия; HTML-теги не рвутся (экранирование и обрезка
+считаются вместе).
 
 Публикацией занимается ``bot.services.publisher`` (T10): здесь только
 кнопка и предпросмотр. Меню, правка, снятие и показ источника работают
@@ -31,6 +32,7 @@ from aiogram.types import (
 )
 
 from bot.models import DedupState, Post
+from bot.services.format import last_complete_sentence, trim_to_word
 
 logger = logging.getLogger(__name__)
 
@@ -97,11 +99,15 @@ def caption_len(text: str) -> int:
     return len(text.encode("utf-16-le")) // 2
 
 
-def _escaped_prefix(plain: str, budget: int) -> str:
+def _escaped_prefix(
+    plain: str, budget: int, *, complete_sentences: bool = False
+) -> str:
     """Экранированный HTML-префикс текста, влезающий в ``budget`` единиц.
 
     Обрезка идёт по исходному тексту, а длина считается по экранированному:
-    ``&`` → ``&amp;`` не вылезет за лимит и не разорвёт сущность.
+    ``&`` → ``&amp;`` не вылезет за лимит и не разорвёт сущность. Текст
+    не дополняется многоточием: тело обрезается по концу предложения,
+    заголовок — по границе слова.
     """
     if budget <= 0:
         return ""
@@ -112,11 +118,17 @@ def _escaped_prefix(plain: str, budget: int) -> str:
     low, high = 0, len(plain)
     while low < high:
         middle = (low + high + 1) // 2
-        if caption_len(html.escape(plain[:middle], quote=False)) <= budget - 1:
+        if caption_len(html.escape(plain[:middle], quote=False)) <= budget:
             low = middle
         else:
             high = middle - 1
-    return html.escape(plain[:low].rstrip(), quote=False) + "…"
+    prefix = plain[:low].rstrip()
+    prefix = (
+        last_complete_sentence(prefix)
+        if complete_sentences
+        else trim_to_word(prefix)
+    )
+    return html.escape(prefix, quote=False)
 
 
 def card_title(post: Post) -> str:
@@ -148,9 +160,13 @@ def card_text(post: Post, *, limit: int = CARD_CAPTION_LIMIT) -> str:
     title_html = f"<b>{_escaped_prefix(title, limit - caption_len(prefix) - 7)}</b>"
     text = prefix + title_html
     if body and caption_len(text) + 2 < limit:
-        text += "\n\n" + _escaped_prefix(
-            body, limit - caption_len(text) - 2
+        body_html = _escaped_prefix(
+            body,
+            limit - caption_len(text) - 2,
+            complete_sentences=True,
         )
+        if body_html:
+            text += "\n\n" + body_html
     return text
 
 

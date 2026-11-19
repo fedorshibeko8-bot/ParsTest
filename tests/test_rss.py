@@ -140,20 +140,31 @@ def test_clean_text_strips_html_and_entities() -> None:
 
 
 def test_make_lead_shortens_long_text() -> None:
-    raw = "<p>" + "Слово " * 100 + "</p>"
+    raw = "<p>" + "Rockstar подтвердила дату релиза. " * 40 + "</p>"
     lead = make_lead(raw)
 
-    assert len(lead) <= LEAD_MAX_CHARS + 1
-    assert lead.endswith("…")
+    assert len(lead) <= LEAD_MAX_CHARS
+    assert lead.endswith(".")
+    assert "…" not in lead
     assert "<" not in lead
     assert "  " not in lead
     # Короткий текст не трогаем и многоточие не добавляем.
     assert make_lead("<p>Короткий <b>текст</b></p>") == "Короткий текст"
 
 
+def test_make_lead_without_complete_sentence_keeps_full_text() -> None:
+    raw = "<p>" + "Слово " * 100 + "</p>"
+
+    lead = make_lead(raw)
+
+    # Обрывать незавершённую фразу запрещено — возвращаем текст целиком.
+    assert lead == " ".join(["Слово"] * 100)
+    assert "…" not in lead
+
+
 def test_make_lead_custom_limit() -> None:
-    assert make_lead("один два три четыре", max_chars=8) == "один два…"
-    assert make_lead("один два три четыре", max_chars=9) == "один два…"
+    assert make_lead("Один. Два. Три.", max_chars=8) == "Один."
+    assert make_lead("Один. Два. Три.", max_chars=11) == "Один. Два."
 
 
 def test_extract_image_prefers_enclosure() -> None:

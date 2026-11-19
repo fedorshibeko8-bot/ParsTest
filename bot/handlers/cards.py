@@ -179,7 +179,7 @@ async def _rewrite_post(
     if user is None:  # pragma: no cover - проверено в _require_owned
         return
 
-    await callback.answer("Переписываю…")
+    await callback.answer("Переписываю текст.")
     try:
         outcome = await rewrite_post(db, settings, post, actor_id=user.id)
     except RewriteError as exc:
@@ -211,7 +211,7 @@ async def _publish_post(
     if user is None:  # pragma: no cover - проверено в _require_owned
         return
 
-    await callback.answer("Публикую…")
+    await callback.answer("Публикую в канал.")
     try:
         publication = await publish_post(
             db, settings, post, actor_id=user.id, bot=bot
@@ -219,12 +219,7 @@ async def _publish_post(
     except PublishError as exc:
         logger.warning("Публикация поста #%s не удалась: %s", post.id, exc)
         if isinstance(callback.message, Message):
-            hint = (
-                "\n\nОтредактируйте текст или нажмите «Доработать с ИИ»."
-                if exc.problems
-                else ""
-            )
-            await callback.message.answer(f"Не удалось опубликовать: {exc}{hint}")
+            await callback.message.answer(f"Не удалось опубликовать: {exc}")
         return
 
     message = callback.message if isinstance(callback.message, Message) else None

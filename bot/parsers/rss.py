@@ -43,6 +43,7 @@ from bot.config import Settings
 from bot.db import Database
 from bot.models import utcnow
 from bot.parsers.sources import SOURCES, FeedSource
+from bot.services.format import cut_sentences
 
 logger = logging.getLogger(__name__)
 
@@ -156,22 +157,15 @@ def clean_text(raw: str) -> str:
 
 
 def make_lead(raw: str, *, max_chars: int = LEAD_MAX_CHARS) -> str:
-    """Лид новости: чистый текст, обрезанный до ``max_chars`` по границе слова.
+    """Лид новости: чистый текст, обрезанный по концу целого предложения.
 
-    Если текст длиннее, он обрезается и получает многоточие; итоговая длина
-    не превышает ``max_chars`` + 1 символ (многоточие).
+    Многоточие не ставится. Если ни одно предложение не укладывается в лимит,
+    возвращается полный текст — обрывать фразу запрещено.
     """
     text = clean_text(raw)
     if max_chars <= 0 or len(text) <= max_chars:
         return text
-    prefix = text[:max_chars]
-    cut = prefix.rstrip()
-    # Если обрыв пришёлся на середину слова — отступаем к его началу.
-    if not (prefix[-1].isspace() or text[max_chars].isspace()):
-        space = cut.rfind(" ")
-        if space >= max_chars // 2:
-            cut = cut[:space].rstrip()
-    return cut.rstrip(" ,.;:—–-") + "…"
+    return cut_sentences(text, max_chars) or text
 
 
 def _is_image_url(url: str, mime_type: str | None = None) -> bool:

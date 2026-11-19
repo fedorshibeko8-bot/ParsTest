@@ -7,8 +7,8 @@
 Порядок важен:
 
 1. проверить, что пост всё ещё перехвачен этим админом;
-2. собрать текст поста (черновик, иначе оригинал), очистить его от ссылок,
-   хэштегов и упоминаний и проверить длины по ТЗ;
+2. собрать текст поста (черновик, иначе оригинал) и очистить его от ссылок,
+   хэштегов и упоминаний; длины из ТЗ публикацию не блокируют;
 3. отправить в канал (фото сверху + подпись или просто текст);
 4. только после успешной отправки перевести пост в ``published``.
 
@@ -41,7 +41,7 @@ from bot.config import Settings
 from bot.db import Database, InvalidTransitionError
 from bot.models import Post
 from bot.services.cards import CARD_CAPTION_LIMIT, caption_len, image_file
-from bot.services.format import clean_text, length_problems
+from bot.services.format import TITLE_MAX, clean_text, cut_words
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +52,8 @@ MESSAGE_LIMIT: Final[int] = 4096
 class PublishError(RuntimeError):
     """Публикация не выполнена; пост остался за админом.
 
-    ``problems`` — конкретные претензии к тексту (длины), чтобы показать
-    их админу списком, а не одной строкой.
+    ``problems`` оставлен для совместимости; новые ошибки его не применяют —
+    публикация больше не проверяет текст на соответствие длинам из ТЗ.
     """
 
     def __init__(self, message: str, *, problems: tuple[str, ...] = ()) -> None:
@@ -93,23 +93,20 @@ def publication_text(title: str, body: str) -> str:
 
 
 def build_publication(post: Post) -> tuple[str, str, str]:
-    """Собрать и проверить текст поста: ``(заголовок, тело, HTML)``.
+    """Собрать текст поста: ``(заголовок, тело, HTML)``.
 
-    :raises PublishError: текста нет или он не соответствует ТЗ по длине.
+    Публикация не блокируется несоответствием ТЗ по длине: админ сам решает,
+    что уходит в канал. Текст очищается от ссылок, хэштегов и упоминаний,
+    но ограничения по числу символов здесь не применяются.
     """
     title = clean_text(post_title(post))
     body = clean_text(post_body(post))
-    if not title:
-        raise PublishError("У поста нет заголовка — публиковать нечего.")
-    if not body:
-        raise PublishError("У поста нет текста — публиковать нечего.")
-
-    problems = length_problems(title, body)
-    if problems:
-        raise PublishError(
-            "Текст не соответствует требованиям ТЗ:\n- " + "\n- ".join(problems),
-            problems=problems,
-        )
+    if not title and body:
+        title = cut_words(body, TITLE_MAX)
+    if not body and title:
+        body = title
+    if not title and not body:
+        raise PublishError("Пост пустой — нечего публиковать.")
     return title, body, publication_text(title, body)
 
 
@@ -123,12 +120,12 @@ def channel_target(settings: Settings) -> str | int:
 
 
 async def _send_to_channel(
-    bot: Bot, settings: Settings, post: Post, text: str
+    bot: Bot, settings: Settings, post: Post, text: str, *, with_photo: bool
 ) -> int | None:
     """Отправить пост в канал и вернуть ``message_id`` (``None`` — ошибка)."""
     target = channel_target(settings)
     silent = settings.publish_silent
-    path = image_file(post)
+    path = image_file(post) if with_photo else None
 
     try:
         if path is not None:
@@ -173,7 +170,7 @@ async def publish_post(
 ) -> Publication:
     """Опубликовать пост в канал и отметить его ``published``.
 
-    :raises PublishError: пост уже не у админа, текст не по ТЗ или Telegram
+    :raises PublishError: пост уже не у админа, нет текста или Telegram
         отказал. В любом случае пост остаётся ``intercepted`` за владельцем.
     """
     fresh = await db.get_post(post.id)
@@ -183,12 +180,13 @@ async def publish_post(
     _title, _body, text = build_publication(fresh)
 
     # Подпись к фото ограничена 1024 единицами UTF-16, а HTML-экранирование
-    # раздувает текст (& → &amp;). Проверяем итоговую разметку, чтобы Telegram
-    # не отклонил уже готовую публикацию.
-    if image_file(fresh) is not None and caption_len(text) > CARD_CAPTION_LIMIT:
-        raise PublishError(
-            "Текст с картинкой не влезает в подпись Telegram — сократите его "
-            "или уберите картинку."
+    # раздувает текст (& → &amp;). Это технический лимит Telegram, а не ТЗ:
+    # не блокируем публикацию, а отправляем пост текстом без картинки.
+    with_photo = image_file(fresh) is not None and caption_len(text) <= CARD_CAPTION_LIMIT
+    if image_file(fresh) is not None and not with_photo:
+        logger.warning(
+            "Пост #%s: подпись длиннее лимита Telegram, отправляю без картинки",
+            fresh.id,
         )
 
     if settings.dry_run:
@@ -200,7 +198,9 @@ async def publish_post(
                 "Не задан CHANNEL_ID — публикация невозможна. "
                 "Заполните его в .env или включите DRY_RUN=1."
             )
-        message_id = await _send_to_channel(bot, settings, fresh, text)
+        message_id = await _send_to_channel(
+            bot, settings, fresh, text, with_photo=with_photo
+        )
         logger.info(
             "Пост #%s опубликован в канал %s (message_id=%s, silent=%s)",
             fresh.id,

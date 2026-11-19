@@ -186,6 +186,21 @@ def test_parse_strips_quotes_in_title() -> None:
     assert parse_response(raw)[0] == GOOD_TITLE
 
 
+def test_parse_removes_trailing_ellipsis() -> None:
+    raw = model_json(
+        title="GTA 6 выйдет в 2027 году...",
+        body="Rockstar подтвердила дату релиза. Окно выхода станет известно позже...",
+    )
+
+    title, body = parse_response(raw)
+
+    assert title == "GTA 6 выйдет в 2027 году"
+    # Незавершённая часть не показывается: остаётся целое предложение.
+    assert body == "Rockstar подтвердила дату релиза."
+    assert "…" not in title + body
+    assert "..." not in title + body
+
+
 # ----------------------------------------------------------------------
 # Длины
 # ----------------------------------------------------------------------
@@ -211,9 +226,9 @@ def test_fit_body_prefers_sentence_boundary() -> None:
     assert fitted.endswith(".")
 
 
-def test_fit_body_cuts_unbroken_text() -> None:
-    fitted = fit_body("я" * 1000)
-    assert len(fitted) <= BODY_MAX
+def test_fit_body_drops_unfinished_text() -> None:
+    # Ни одного законченного предложения — обрыв не показывается совсем.
+    assert fit_body("я" * 1000) == ""
 
 
 def test_normalize_valid_text_has_no_warnings() -> None:

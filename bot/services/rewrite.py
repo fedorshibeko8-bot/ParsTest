@@ -37,7 +37,10 @@ from bot.services.format import (
     TITLE_MIN,
     TOTAL_MAX,
     clean_text,
+    cut_sentences,
+    cut_words,
     one_line,
+    remove_trailing_ellipsis,
 )
 
 logger = logging.getLogger(__name__)
@@ -79,7 +82,8 @@ SYSTEM_PROMPT: Final[str] = (
     "англоязычные игровые новости и пересказываешь их своими словами. "
     "Ты никогда не добавляешь факты, которых нет в исходном тексте, не "
     "придумываешь числа, даты, цитаты и названия. Ты не пишешь ссылки, "
-    "хэштеги, имена каналов и подписи. Ответ — строго JSON без пояснений."
+    "хэштеги, имена каналов и подписи. Не обрывай предложения многоточием. "
+    "Ответ — строго JSON без пояснений."
 )
 
 
@@ -153,6 +157,7 @@ def build_prompt(post: Post) -> str:
         "- сохраняй числа, даты и названия так, как они даны в новости;",
         "- не вставляй ссылки, хэштеги, имена каналов и подписи;",
         "- без вводных фраз вроде «в статье сообщается»;",
+        "- не ставь многоточие в конце: предложения должны быть законченными;",
         'Ответ — только JSON: {"title": "...", "body": "..."}',
     ]
     return "\n".join(lines)
@@ -188,8 +193,8 @@ def parse_response(raw: str) -> tuple[str, str]:
     """
     data = _load_json(raw)
     if data is not None:
-        title = one_line(clean_text(data.get("title")))
-        body = clean_text(data.get("body"))
+        title = remove_trailing_ellipsis(one_line(clean_text(data.get("title"))))
+        body = remove_trailing_ellipsis(clean_text(data.get("body")))
         if title and body:
             return title, body
         if "title" in data or "body" in data:
@@ -197,8 +202,8 @@ def parse_response(raw: str) -> tuple[str, str]:
 
     lines = [line.strip() for line in _FENCE_RE.sub("", raw).splitlines() if line.strip()]
     if len(lines) >= 2:
-        title = one_line(clean_text(lines[0]))
-        body = clean_text(" ".join(lines[1:]))
+        title = remove_trailing_ellipsis(one_line(clean_text(lines[0])))
+        body = remove_trailing_ellipsis(clean_text(" ".join(lines[1:])))
         if title and body:
             return title, body
 
@@ -206,31 +211,17 @@ def parse_response(raw: str) -> tuple[str, str]:
 
 
 def fit_title(title: str) -> str:
-    """Уложить заголовок в 70 символов по границе слова."""
-    text = one_line(title)
-    if len(text) <= TITLE_MAX:
-        return text
-    cut = text[:TITLE_MAX]
-    space = cut.rfind(" ")
-    if space >= TITLE_MIN // 2:
-        cut = cut[:space]
-    return cut.rstrip(" ,;:—–-")
+    """Уложить заголовок в 70 символов по границе слова, без многоточия."""
+    return cut_words(one_line(title), TITLE_MAX)
 
 
 def fit_body(body: str) -> str:
-    """Уложить тело в 350 символов: сначала по концу предложения."""
-    text = one_line(body)
-    if len(text) <= BODY_MAX:
-        return text
-    cut = text[:BODY_MAX]
-    for stop in (". ", "! ", "? "):
-        index = cut.rfind(stop)
-        if index >= BODY_MIN:
-            return cut[: index + 1].strip()
-    space = cut.rfind(" ")
-    if space > 0:
-        cut = cut[:space]
-    return cut.rstrip(" ,;:—–-")
+    """Уложить тело в 350 символов только по концу целого предложения.
+
+    Если ни одно предложение не влезло, возвращается пустая строка: обрывать
+    фразу и ставить многоточие запрещено.
+    """
+    return cut_sentences(one_line(body), BODY_MAX)
 
 
 def length_warnings(title: str, body: str) -> tuple[str, ...]:
@@ -252,8 +243,8 @@ def normalize(title: str, body: str) -> tuple[str, str, tuple[str, ...]]:
     слишком короткий ответ сохраняется как есть, а админу показывается
     замечание — он может нажать «Доработать с ИИ» ещё раз или поправить вручную.
     """
-    fitted_title = fit_title(title)
-    fitted_body = fit_body(body)
+    fitted_title = fit_title(remove_trailing_ellipsis(title))
+    fitted_body = fit_body(remove_trailing_ellipsis(body))
     return fitted_title, fitted_body, length_warnings(fitted_title, fitted_body)
 
 
