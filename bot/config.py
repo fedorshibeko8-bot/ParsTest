@@ -331,14 +331,24 @@ def load_settings(env_path: Path | None = None) -> Settings:
         reader.text("NEWS_KEYWORDS"), DEFAULT_NEWS_KEYWORDS, errors
     )
 
-    # --- Ключи ИИ: обязательны вне DRY_RUN --------------------------------
+    # --- Ключи ИИ: вне DRY_RUN достаточно одного провайдера ----------------
     gemini_api_key = _clean_optional(reader.text("GEMINI_API_KEY"))
     groq_api_key = _clean_optional(reader.text("GROQ_API_KEY"))
     if not dry_run:
-        if not gemini_api_key:
-            errors.append("Не задан GEMINI_API_KEY - ключ Gemini API (нужен вне DRY_RUN).")
-        if not groq_api_key:
-            errors.append("Не задан GROQ_API_KEY - ключ Groq API для фоллбэка (нужен вне DRY_RUN).")
+        if not gemini_api_key and not groq_api_key:
+            errors.append(
+                "Не задан ни один ключ ИИ: нужен GEMINI_API_KEY (основной) "
+                "или GROQ_API_KEY (запасной)."
+            )
+        elif not gemini_api_key:
+            reader.warnings.append(
+                "GEMINI_API_KEY не задан: рерайт пойдёт только через Groq."
+            )
+        elif not groq_api_key:
+            reader.warnings.append(
+                "GROQ_API_KEY не задан: запасной провайдер отключён, "
+                "рерайт работает только через Gemini."
+            )
 
     # --- Прочие настройки с дефолтами -------------------------------------
     log_level = reader.text("LOG_LEVEL", "INFO").upper()
@@ -380,7 +390,7 @@ def load_settings(env_path: Path | None = None) -> Settings:
         dry_run=dry_run,
         news_keywords=news_keywords,
         gemini_api_key=gemini_api_key,
-        gemini_model=reader.text("GEMINI_MODEL", "gemini-2.5-flash-lite"),
+        gemini_model=reader.text("GEMINI_MODEL", "gemini-3.5-flash-lite"),
         groq_api_key=groq_api_key,
         groq_model=reader.text("GROQ_MODEL", "openai/gpt-oss-120b"),
         log_level=log_level,
