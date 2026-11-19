@@ -2,8 +2,10 @@
 
 Правила из п. 5–7 ТЗ:
 
-* новый ``pending``-пост анонсируется администраторам **без контента** —
-  только «Найдена новость», номер и кнопка «Взять инициативу»;
+* новый ``pending``-пост анонсируется администраторам заголовком статьи
+  (чтобы было понятно, о чём новость) без текста, с номером и кнопкой
+  «Взять инициативу»; полный текст и перевод показываются уже в карточке
+  после перехвата;
 * уведомления идут в личку, по самому старому посту первым (FIFO);
 * видимыми считаются до ``QUEUE_VISIBLE_LIMIT`` (10) самых свежих pending;
 * админ с активным перехватом новых уведомлений не получает;
@@ -153,11 +155,34 @@ async def free_admin_ids(db: Database, settings: Settings) -> list[int]:
     return free
 
 
-def _new_post_message(post_id: int) -> str:
-    return (
-        "🆕 Найдена новость\n"
-        f"Пост #{post_id}. Нажмите «{TAKE_BUTTON_TEXT}», чтобы открыть карточку."
-    )
+def _new_post_message(post: Post) -> str:
+    """Уведомление о новом посте: номер и заголовок статьи, без текста."""
+    lines = ["🆕 Найдена новость", f"Пост #{post.id}"]
+    headline = post_headline(post)
+    if headline:
+        lines.append(headline)
+    if post.source:
+        lines.append(f"Источник: {post.source}")
+    lines.append(f"Нажмите «{TAKE_BUTTON_TEXT}», чтобы открыть карточку.")
+    return "\n".join(lines)
+
+
+def post_headline(post: Post, *, limit: int = 160) -> str:
+    """Короткий заголовок статьи для служебных сообщений.
+
+    Берётся оригинальный заголовок: до перехвата перевода ещё нет, а
+    админу достаточно понять тему. Перевод появится в карточке после
+    нажатия «Взять инициативу». Длинный заголовок обрезается по границе
+    слова, чтобы уведомление оставалось компактным.
+    """
+    title = " ".join((post.title_original or "").split())
+    if len(title) <= limit:
+        return title
+    cut = title[:limit]
+    space = cut.rfind(" ")
+    if space > limit // 2:
+        cut = cut[:space]
+    return cut.rstrip(" ,;:—–-") + "…"
 
 
 async def announce_posts(
@@ -193,7 +218,7 @@ async def announce_posts(
         partial = await send_to_admins(
             bot,
             settings,
-            _new_post_message(post.id),
+            _new_post_message(post),
             reply_markup=take_keyboard(post.id),
             exclude=[admin_id for admin_id in settings.admin_ids if admin_id not in recipients],
         )
@@ -322,6 +347,18 @@ async def register_owner_action(
 # ----------------------------------------------------------------------
 # Тайм-ауты и TTL
 # ----------------------------------------------------------------------
+def _returned_message(post: Post) -> str:
+    """Уведомление о возврате поста в очередь — тоже с заголовком статьи."""
+    lines = [
+        f"⏰ Пост #{post.id} снова в очереди: тайм-аут перехвата истёк.",
+    ]
+    headline = post_headline(post)
+    if headline:
+        lines.append(headline)
+    lines.append("Можно брать.")
+    return "\n".join(lines)
+
+
 async def release_timed_out(
     bot: Bot,
     db: Database,
@@ -344,8 +381,7 @@ async def release_timed_out(
         await send_to_admins(
             bot,
             settings,
-            f"⏰ Пост #{post.id} снова в очереди: тайм-аут перехвата истёк. "
-            "Можно брать.",
+            _returned_message(post),
             reply_markup=take_keyboard(post.id),
         )
     return released
@@ -424,6 +460,7 @@ __all__ = [
     "free_admin_ids",
     "maintenance_loop",
     "parse_take_callback",
+    "post_headline",
     "register_owner_action",
     "release_timed_out",
     "run_maintenance_once",

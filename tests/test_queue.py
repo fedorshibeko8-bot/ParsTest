@@ -8,21 +8,25 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 
 import pytest
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
-from aiogram.methods import SendMessage
+from aiogram.methods import AnswerCallbackQuery, EditMessageText, SendMessage
 from aiogram.types import InlineKeyboardMarkup, User
 
+from bot.config import Settings
 from bot.models import PostStatus
 from bot.services.queue import (
     NotifyResult,
+    TAKE_BUTTON_TEXT,
     TakeStatus,
     announce_posts,
     free_admin_ids,
     maintenance_loop,
     parse_take_callback,
+    post_headline,
     register_owner_action,
     release_timed_out,
     run_maintenance_once,
@@ -32,6 +36,8 @@ from bot.services.queue import (
     take_post,
     visible_pending,
 )
+from bot.services.rewrite import RewriteError, RewriteOutcome, RewriteResult
+from tests import fakes
 from tests.helpers import T0, make_settings, offset, run
 
 
@@ -164,19 +170,35 @@ def test_announce_posts_goes_oldest_first_fifo(db, make_post) -> None:
     assert f"#{newest.id}" in texts[2]
 
 
-def test_announce_has_no_content_and_has_take_button(db, make_post) -> None:
+def test_announce_shows_headline_but_not_lead(db, make_post) -> None:
     settings = make_settings(admin_ids=(1,))
-    post = make_post(title_original="Секретный заголовок", lead="Секретный лид")
+    post = make_post(
+        title_original="GTA 6 выйдет в 2027 году", lead="Секретный лид"
+    )
     bot = FakeBot()
 
     run(announce_posts(bot, db, settings, [post]))
 
     message = bot.sent[0]
-    assert f"#{post.id}" in message.text
-    assert "Секретный" not in message.text
+    assert f"Пост #{post.id}" in message.text
+    # Заголовок нужен, чтобы админ понимал тему до перехвата…
+    assert "GTA 6 выйдет в 2027 году" in message.text
+    # …но текст новости до перехвата не показывается.
+    assert "Секретный лид" not in message.text
+    assert TAKE_BUTTON_TEXT in message.text
     assert message.reply_markup is not None
     button = message.reply_markup.inline_keyboard[0][0]
     assert button.callback_data == take_callback(post.id)
+
+
+def test_post_headline_cuts_long_titles(make_post) -> None:
+    post = make_post(title_original="Слово " * 100)
+
+    headline = post_headline(post, limit=40)
+
+    assert len(headline) <= 41  # 40 символов + многоточие
+    assert headline.endswith("…")
+    assert not headline.endswith(" …")
 
 
 def test_announce_limits_to_visible_posts(db, make_post) -> None:
@@ -189,10 +211,7 @@ def test_announce_limits_to_visible_posts(db, make_post) -> None:
     run(announce_posts(bot, db, settings, posts))
 
     assert len(bot.sent) == 10
-    announced_ids = [
-        int(message.text.split("Пост #", 1)[1].split(".", 1)[0])
-        for message in bot.sent
-    ]
+    announced_ids = [int(re.search(r"#(\d+)", message.text).group(1)) for message in bot.sent]
     # Старые два (id 1, 2) за пределами «10 самых свежих» не анонсируются.
     assert announced_ids == [post.id for post in posts[2:]]
 
@@ -381,6 +400,7 @@ def test_timeout_returns_post_to_queue_and_notifies_all(db, make_post) -> None:
 
     assert [message.chat_id for message in bot.sent] == [1, 2]
     assert all(f"#{post.id}" in message.text for message in bot.sent)
+    assert all(post.title_original in message.text for message in bot.sent)
     assert all(message.reply_markup is not None for message in bot.sent)
 
 
@@ -518,3 +538,113 @@ def test_handler_take_rejects_broken_callback(db) -> None:
     run(handle_take(callback, FakeBot(), db, settings))
 
     assert callback.answers and callback.answers[0][1] is True
+
+
+# ----------------------------------------------------------------------
+# Перевод после перехвата
+# ----------------------------------------------------------------------
+def _translation_settings() -> Settings:
+    """Боевые настройки без сети: ключ задан, провайдер подменяется в тесте."""
+    return make_settings(admin_ids=(1,), dry_run=False, gemini_api_key="test-key")
+
+
+def test_handler_take_translates_post_after_taking(db, make_post, monkeypatch) -> None:
+    from bot.handlers import queue as queue_handler
+
+    post = make_post(
+        title_original="GTA 6 will launch in 2027",
+        lead="Rockstar confirmed the release window.",
+    )
+    bot = fakes.FakeBot()
+    callback = fakes.make_callback(
+        bot, take_callback(post.id), fakes.make_message(bot, chat_id=10)
+    )
+    calls: list[tuple[int, int]] = []
+
+    async def fake_rewrite(database, settings, current, *, actor_id):
+        calls.append((current.id, actor_id))
+        run_kwargs = {"title": "GTA 6 выйдет в 2027 году", "body": "Rockstar подтвердила окно релиза."}
+        await database.add_draft_version(current.id, **run_kwargs)
+        updated = await database.get_post(current.id)
+        return RewriteOutcome(
+            post=updated,
+            result=RewriteResult(
+                title=run_kwargs["title"], body=run_kwargs["body"], provider="gemini"
+            ),
+            round_no=1,
+        )
+
+    monkeypatch.setattr(queue_handler, "rewrite_post", fake_rewrite)
+
+    run(queue_handler.handle_take(callback, bot, db, _translation_settings()))
+
+    assert calls == [(post.id, 1)]
+    stored = run(db.get_post(post.id))
+    assert stored is not None
+    assert stored.owner_id == 1
+    assert stored.draft_title == "GTA 6 выйдет в 2027 году"
+
+    # Показ «Перевожу…», затем карточка уже с русским текстом.
+    edits = bot.of(EditMessageText)
+    assert len(edits) >= 2
+    assert "Перевожу" in (edits[0].text or "")
+    assert "GTA 6 выйдет в 2027 году" in (edits[-1].text or "")
+    assert all("will launch" not in (edit.text or "") for edit in edits)
+    assert "Перевожу" in (bot.of(AnswerCallbackQuery)[0].text or "")
+
+
+def test_handler_take_keeps_original_when_translation_fails(
+    db, make_post, monkeypatch
+) -> None:
+    from bot.handlers import queue as queue_handler
+
+    post = make_post(
+        title_original="GTA 6 will launch in 2027",
+        lead="Rockstar confirmed the release window.",
+    )
+    bot = fakes.FakeBot()
+    callback = fakes.make_callback(
+        bot, take_callback(post.id), fakes.make_message(bot, chat_id=10)
+    )
+
+    async def failing_rewrite(*args, **kwargs):
+        raise RewriteError("gemini: лимит запросов (429)")
+
+    monkeypatch.setattr(queue_handler, "rewrite_post", failing_rewrite)
+
+    run(queue_handler.handle_take(callback, bot, db, _translation_settings()))
+
+    stored = run(db.get_post(post.id))
+    assert stored is not None
+    # Перехват не отменяется из-за сбоя ИИ.
+    assert stored.owner_id == 1
+    assert stored.draft_title == ""
+
+    edits = bot.of(EditMessageText)
+    assert edits and "GTA 6 will launch in 2027" in (edits[-1].text or "")
+    assert any("перевести не удалось" in text for text in bot.texts)
+
+
+def test_handler_take_does_not_translate_twice(db, make_post, monkeypatch) -> None:
+    from bot.handlers import queue as queue_handler
+
+    post = make_post(title_original="GTA 6 will launch in 2027")
+    run(
+        db.add_draft_version(
+            post.id, title="GTA 6 выйдет в 2027 году", body="Готовый черновик."
+        )
+    )
+    bot = fakes.FakeBot()
+    callback = fakes.make_callback(
+        bot, take_callback(post.id), fakes.make_message(bot, chat_id=10)
+    )
+
+    async def must_not_be_called(*args, **kwargs):
+        raise AssertionError("перевод не должен вызываться повторно")
+
+    monkeypatch.setattr(queue_handler, "rewrite_post", must_not_be_called)
+
+    run(queue_handler.handle_take(callback, bot, db, _translation_settings()))
+
+    edits = bot.of(EditMessageText)
+    assert edits and "GTA 6 выйдет в 2027 году" in (edits[-1].text or "")

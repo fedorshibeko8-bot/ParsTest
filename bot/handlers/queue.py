@@ -1,8 +1,12 @@
 """Хендлер кнопки «Взять инициативу» (задача T07).
 
-Карточка и меню владельца — следующая задача (T08). Здесь только захват
-поста: проверка прав, атомарный переход в ``intercepted``, сообщение
-остальным и понятный ответ нажавшему.
+После перехвата пост сразу показывается в карточке. Если у поста ещё нет
+черновика, хендлер вызывает рерайт через ИИ (T09): админ видит новость
+уже переведённой на русский, а не английский оригинал. В ``DRY_RUN``
+сети нет — карточка показывает оригинал, как и раньше.
+
+Ошибка перевода не отменяет перехват: пост остаётся у админа, карточка
+показывает оригинал, а в личку приходит пояснение.
 """
 
 from __future__ import annotations
@@ -10,20 +14,25 @@ from __future__ import annotations
 import logging
 
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message
 
 from bot.config import Settings
 from bot.db import Database
+from bot.models import Post
 from bot.services.cards import refresh_card
 from bot.services.queue import (
     TAKE_CALLBACK_PREFIX,
     parse_take_callback,
     take_post,
 )
+from bot.services.rewrite import RewriteError, rewrite_post
 
 logger = logging.getLogger(__name__)
 
 router = Router(name="queue")
+
+TRANSLATING_TEXT = "⏳ Перевожу новость на русский…"
 
 
 @router.callback_query(F.data.startswith(TAKE_CALLBACK_PREFIX))
@@ -52,10 +61,62 @@ async def handle_take(
         await callback.answer(outcome.message, show_alert=True)
         return
 
-    await callback.answer("Пост ваш.")
-    if isinstance(callback.message, Message) and outcome.post is not None:
-        # Превращаем уведомление в карточку: текст — редактируем, фото — новое.
-        await refresh_card(bot, callback.message, outcome.post)
+    message = callback.message if isinstance(callback.message, Message) else None
+    post = outcome.post
+    if message is None or post is None:
+        await callback.answer("Пост ваш.")
+        return
+
+    # Черновик уже есть (например, пост возвращали в очередь) или включён
+    # DRY_RUN — переводить нечего/нечем: показываем карточку как есть.
+    if settings.dry_run or post.draft_title.strip():
+        await callback.answer("Пост ваш.")
+        await refresh_card(bot, message, post)
+        return
+
+    await callback.answer("Пост ваш. Перевожу на русский…")
+    await _translate_and_show(
+        bot, db, settings, message=message, post=post, actor_id=user.id
+    )
 
 
-__all__ = ["handle_take", "router"]
+async def _translate_and_show(
+    bot: Bot,
+    db: Database,
+    settings: Settings,
+    *,
+    message: Message,
+    post: Post,
+    actor_id: int,
+) -> None:
+    """Перевести новость через ИИ и показать карточку с черновиком.
+
+    Пока идёт запрос к модели, уведомление превращается в строку
+    «Перевожу…», чтобы админ видел, что бот работает. Если ИИ недоступен,
+    перехват сохраняется, показывается оригинал и приходит пояснение.
+    """
+    try:
+        await message.edit_text(TRANSLATING_TEXT)
+    except TelegramBadRequest as exc:
+        # Сообщение могло устареть — не мешает переводу и карточке.
+        logger.debug("Не удалось показать «Перевожу…»: %s", exc)
+
+    try:
+        outcome = await rewrite_post(db, settings, post, actor_id=actor_id)
+    except RewriteError as exc:
+        logger.warning("Перевод поста #%s не удался: %s", post.id, exc)
+        await refresh_card(bot, message, post)
+        try:
+            await message.answer(
+                f"Пост #{post.id} ваш, но перевести не удалось: {exc}\n"
+                "Показываю оригинал. Можно нажать «Доработать с ИИ» ещё раз "
+                "или поправить текст вручную."
+            )
+        except Exception:
+            logger.debug("Не удалось сообщить об ошибке перевода #%s", post.id)
+        return
+
+    await refresh_card(bot, message, outcome.post)
+
+
+__all__ = ["TRANSLATING_TEXT", "handle_take", "router"]
