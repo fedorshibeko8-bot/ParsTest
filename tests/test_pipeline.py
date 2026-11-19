@@ -1,11 +1,14 @@
 """Тесты конвейера новости (задача T11).
 
-Проверяется порядок «фильтр → дедупликация → пост → картинка → анонс»
-и то, что сбой на любом шаге не теряет уже созданный пост.
+Проверяется порядок «фильтр → дедупликация → пост → картинка → анонс»,
+ограничение первой загрузки лент и то, что сбой на любом шаге не теряет
+уже созданный пост. Отдельно — рассылка пачкой: при всплеске новостей
+админы получают не больше видимой очереди уведомлений за проход.
 """
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -15,10 +18,10 @@ from bot.config import Settings
 from bot.db import Database
 from bot.filters.dedup import DedupVerdict
 from bot.models import DedupState, PostStatus
-from bot.parsers.rss import FeedItem
+from bot.parsers.rss import FeedItem, PollOutcome
 from bot.services import pipeline
 from bot.services.images import save_image_bytes
-from bot.services.pipeline import handle_feed_item
+from bot.services.pipeline import handle_feed_item, handle_feed_items
 from bot.services.queue import take_callback
 from tests.fakes import PNG, FakeBot
 from tests.helpers import make_settings, run
@@ -221,3 +224,194 @@ def test_announcement_failure_keeps_post_pending(db, settings, monkeypatch) -> N
 
     assert post is not None
     assert run(db.get_post(post.id)).status is PostStatus.PENDING
+
+
+# ----------------------------------------------------------------------
+# Пачка новостей и ограничение первой загрузки
+# ----------------------------------------------------------------------
+@pytest.fixture()
+def always_new(monkeypatch):
+    """Не тратить время на дедупликацию: все записи считаются новыми."""
+
+    async def fake_check(*args, **kwargs):
+        return DedupVerdict(DedupState.NEW)
+
+    monkeypatch.setattr(pipeline, "check_news", fake_check)
+
+
+SOURCE_NAMES = ("VGC", "IGN", "Eurogamer", "GamesRadar+", "GameSpot")
+
+
+def many_items(count: int, *, start: int = 1) -> list[FeedItem]:
+    return [
+        make_item(
+            url=f"https://example.com/gta6/{index}",
+            guid=f"vgc-{index}",
+            source=SOURCE_NAMES[(index - 1) % len(SOURCE_NAMES)],
+            title=f"GTA 6, свежая новость номер {index}",
+        )
+        for index in range(start, start + count)
+    ]
+
+
+def test_batch_announces_only_newest_visible_posts(
+    db, settings, always_new
+) -> None:
+    bot = FakeBot()
+
+    created = run(handle_feed_items(bot, db, settings, many_items(15)))
+
+    assert len(created) == 15
+    sent = bot.of(SendMessage)
+    assert len(sent) == settings.queue_visible_limit
+    visible = created[-settings.queue_visible_limit :]
+    for message in sent:
+        # Каждое уведомление указывает номер поста из видимой десятки.
+        assert any(f"#{post.id}" in message.text for post in visible)
+
+
+def test_first_pass_budget_caps_created_posts(db, settings, always_new) -> None:
+    budget = pipeline.ImportBudget(3)
+    bot = FakeBot()
+
+    created = run(
+        handle_feed_items(bot, db, settings, many_items(10), budget=budget)
+    )
+
+    assert len(created) == 3
+    assert budget.left == 0
+    assert run(db.count_pending()) == 3
+    assert len(bot.of(SendMessage)) == 3
+
+
+def test_import_budget_is_not_spent_on_irrelevant(db, settings) -> None:
+    budget = pipeline.ImportBudget(1)
+    bot = FakeBot()
+    sport = make_item(
+        url="https://example.com/sport",
+        title="Футбол: новый сезон",
+        lead="Матч перенесён на субботу.",
+    )
+
+    created = run(handle_feed_items(bot, db, settings, [sport], budget=budget))
+
+    assert created == []
+    assert budget.left == 1
+
+
+def test_import_budget_is_not_spent_on_duplicate_url(
+    db, settings, always_new
+) -> None:
+    budget = pipeline.ImportBudget(2)
+    bot = FakeBot()
+
+    run(handle_feed_items(bot, db, settings, [make_item()], budget=budget))
+    assert budget.left == 1
+
+    # Тот же URL: create_post отвергает дубль, место не тратится.
+    again = run(handle_feed_items(bot, db, settings, [make_item()], budget=budget))
+
+    assert again == []
+    assert budget.left == 1
+    assert run(db.count_pending()) == 1
+
+
+def test_poll_news_loop_announces_batch_and_stops(
+    db, settings, always_new, monkeypatch
+) -> None:
+    items = many_items(12)
+    stop = asyncio.Event()
+
+    async def fake_poll(db_, settings_, *, sources=None, on_item=None):
+        for item in items:
+            await on_item(item)
+        stop.set()
+        return [
+            PollOutcome(source=source.name, entries=len(items))
+            for source in sources
+        ]
+
+    monkeypatch.setattr(pipeline, "poll_all_sources", fake_poll)
+    monkeypatch.setattr(pipeline, "jitter_delay", lambda settings_: 0.0)
+    bot = FakeBot()
+
+    async def scenario() -> None:
+        await asyncio.wait_for(
+            pipeline.poll_news_loop(bot, db, settings, stop_event=stop), timeout=5
+        )
+
+    run(scenario())
+
+    # Первый проход ограничен видимой очередью — без сотни сообщений.
+    assert run(db.count_pending()) == settings.queue_visible_limit
+    assert len(bot.of(SendMessage)) == settings.queue_visible_limit
+    assert stop.is_set()
+
+
+def test_second_pass_is_not_limited_by_import_budget(
+    db, settings, always_new, monkeypatch
+) -> None:
+    first = many_items(12)
+    second = many_items(3, start=100)
+    rounds = {"n": 0}
+    stop = asyncio.Event()
+
+    async def fake_poll(db_, settings_, *, sources=None, on_item=None):
+        rounds["n"] += 1
+        batch = first if rounds["n"] == 1 else second
+        for item in batch:
+            await on_item(item)
+        if rounds["n"] == 2:
+            stop.set()
+        return [
+            PollOutcome(source=source.name, entries=len(batch))
+            for source in sources
+        ]
+
+    monkeypatch.setattr(pipeline, "poll_all_sources", fake_poll)
+    monkeypatch.setattr(pipeline, "jitter_delay", lambda settings_: 0.0)
+    bot = FakeBot()
+
+    async def scenario() -> None:
+        await asyncio.wait_for(
+            pipeline.poll_news_loop(bot, db, settings, stop_event=stop), timeout=5
+        )
+
+    run(scenario())
+
+    # 10 из первой пачки + все 3 из второй: история режется только один раз.
+    assert rounds["n"] == 2
+    assert run(db.count_pending()) == 13
+    assert len(bot.of(SendMessage)) == 13
+
+
+def test_retry_after_snoozes_only_that_source(
+    db, settings, always_new, monkeypatch
+) -> None:
+    stop = asyncio.Event()
+    calls: list[set[str]] = []
+
+    async def fake_poll(db_, settings_, *, sources=None, on_item=None):
+        calls.append({source.key for source in sources})
+        if len(calls) == 1:
+            return [
+                PollOutcome(source="VGC", entries=0, error="429", retry_after=3600.0)
+            ]
+        stop.set()
+        return [PollOutcome(source=source.name, entries=0) for source in sources]
+
+    monkeypatch.setattr(pipeline, "poll_all_sources", fake_poll)
+    monkeypatch.setattr(pipeline, "jitter_delay", lambda settings_: 0.0)
+
+    async def scenario() -> None:
+        await asyncio.wait_for(
+            pipeline.poll_news_loop(FakeBot(), db, settings, stop_event=stop),
+            timeout=5,
+        )
+
+    run(scenario())
+
+    assert calls[0] == {"vgc", "ign", "eurogamer", "gamesradar", "gamespot"}
+    # 429 от VGC не останавливает остальные ленты.
+    assert "vgc" not in calls[1]
+    assert {"ign", "eurogamer", "gamesradar", "gamespot"} <= calls[1]

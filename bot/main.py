@@ -26,9 +26,8 @@ from bot.config import ConfigError, Settings, load_settings
 from bot.db import Database
 from bot.handlers.cards import router as cards_router
 from bot.handlers.queue import router as queue_router
-from bot.parsers.rss import FeedItem, poll_forever
 from bot.services.backup import daily_backup_loop
-from bot.services.pipeline import handle_feed_item
+from bot.services.pipeline import poll_news_loop
 from bot.services.queue import maintenance_loop
 from bot.utils.logging import setup_logging
 
@@ -103,12 +102,8 @@ async def run_polling(settings: Settings) -> None:
         maintenance_loop(bot, db, settings, stop_event=stop_event)
     )
 
-    async def on_item(item: FeedItem) -> None:
-        """Подписчик парсера: провести новость по всему конвейеру."""
-        await handle_feed_item(bot, db, settings, item)
-
     polling = asyncio.create_task(
-        poll_forever(db, settings, stop_event, on_item=on_item)
+        poll_news_loop(bot, db, settings, stop_event=stop_event)
     )
     backups = asyncio.create_task(daily_backup_loop(settings, stop_event=stop_event))
     tasks = (polling, maintenance, backups)
