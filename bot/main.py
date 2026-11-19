@@ -2,11 +2,11 @@
 
 Запуск: ``python -m bot.main`` (или через ``run.bat`` из задачи T11).
 
-Каркас T01 + очередь T07: диспетчер, логирование, БД, кнопка «Взять
-инициативу» и фоновое обслуживание (TTL 48 ч, тайм-аут перехвата 10 мин).
-Парсер и карточки постов добавят следующие задачи. Без ``BOT_TOKEN`` бот
-не стартует, но завершается понятным сообщением и ненулевым кодом возврата,
-без трейсбека.
+Собирает всё вместе: диспетчер, логирование, БД, опрос RSS (T03–T06),
+очередь с перехватом (T07), карточку владельца (T08), рерайт (T09) и
+публикацию (T10), фоновое обслуживание TTL и тайм-аутов. Без ``BOT_TOKEN``
+бот не стартует, но завершается понятным сообщением и ненулевым кодом
+возврата, без трейсбека.
 """
 
 from __future__ import annotations
@@ -26,6 +26,9 @@ from bot.config import ConfigError, Settings, load_settings
 from bot.db import Database
 from bot.handlers.cards import router as cards_router
 from bot.handlers.queue import router as queue_router
+from bot.parsers.rss import FeedItem, poll_forever
+from bot.services.backup import daily_backup_loop
+from bot.services.pipeline import handle_feed_item
 from bot.services.queue import maintenance_loop
 from bot.utils.logging import setup_logging
 
@@ -74,7 +77,8 @@ def build_dispatcher(settings: Settings, db: Database) -> Dispatcher:
             "Бот на связи.\n"
             f"Режим: {mode}.\n"
             f"Администраторов в конфиге: {len(settings.admin_ids)}.\n"
-            "Уведомления о новостях и кнопка «Взять инициативу» уже работают."
+            "Источники опрашиваются автоматически, уведомления о новостях "
+            "и кнопка «Взять инициативу» работают."
         )
 
     @dispatcher.message(Command("ping"))
@@ -99,6 +103,16 @@ async def run_polling(settings: Settings) -> None:
         maintenance_loop(bot, db, settings, stop_event=stop_event)
     )
 
+    async def on_item(item: FeedItem) -> None:
+        """Подписчик парсера: провести новость по всему конвейеру."""
+        await handle_feed_item(bot, db, settings, item)
+
+    polling = asyncio.create_task(
+        poll_forever(db, settings, stop_event, on_item=on_item)
+    )
+    backups = asyncio.create_task(daily_backup_loop(settings, stop_event=stop_event))
+    tasks = (polling, maintenance, backups)
+
     logger.info("Запуск long polling, администраторов: %d", len(settings.admin_ids))
     try:
         await bot.delete_webhook(drop_pending_updates=True)
@@ -107,9 +121,11 @@ async def run_polling(settings: Settings) -> None:
         )
     finally:
         stop_event.set()
-        maintenance.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await maintenance
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
         await db.close()
         await bot.session.close()
         logger.info("Соединение с Telegram закрыто.")
