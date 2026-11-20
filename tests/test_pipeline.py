@@ -83,18 +83,6 @@ def test_gta_news_reaches_queue(db, settings) -> None:
     assert run(db.list_pending()) == [post]
 
 
-def test_source_published_at_is_kept_for_notification(db, settings) -> None:
-    bot = FakeBot()
-
-    post = run(
-        handle_feed_item(bot, db, settings, make_item(published_at=T0))
-    )
-
-    assert post is not None
-    assert post.source_published_at == T0
-    assert "Оригинал опубликован: 18.11.2026 12:00 UTC" in bot.texts[0]
-
-
 def test_news_is_queued_even_when_all_admins_are_busy(
     db, settings, make_post
 ) -> None:

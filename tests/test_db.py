@@ -33,10 +33,6 @@ def test_schema_created_with_indexes_and_wal(db) -> None:
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             )
         }
-        columns = {
-            row[1]
-            for row in connection.execute("PRAGMA table_info(posts)")
-        }
         indexes = {
             row[0]
             for row in connection.execute(
@@ -49,8 +45,6 @@ def test_schema_created_with_indexes_and_wal(db) -> None:
     assert version == SCHEMA_VERSION
     assert str(mode).lower() == "wal"
     assert {"posts", "draft_versions", "seen_urls", "dedup_log"} <= tables
-    # Миграция v2: дата публикации оригинала хранится отдельно от created_at.
-    assert "source_published_at" in columns
     # Индексы из требований T02: статус, url, guid, created_at + частичные.
     for name in (
         "idx_posts_status",
@@ -94,7 +88,6 @@ def test_create_post_defaults_and_seen_url(db) -> None:
     assert post.dedup_score is None
     assert post.rewrite_rounds == 0
     assert post.created_at is not None
-    assert post.source_published_at is None
 
     loaded = run(db.get_post(post.id))
     assert loaded == post
@@ -106,23 +99,6 @@ def test_create_post_defaults_and_seen_url(db) -> None:
     assert run(db.is_url_seen("https://example.com/gta")) is True
     seen = run(db.get_seen_url("https://example.com/gta"))
     assert seen is not None and seen.post_id == post.id
-
-
-def test_source_published_at_is_persisted(db) -> None:
-    post = run(
-        db.create_post(
-            "https://example.com/dated",
-            title_original="GTA 6 выйдет в 2027 году",
-            source_published_at=T0,
-        )
-    )
-
-    assert post.source_published_at == T0
-    loaded = run(db.get_post(post.id))
-    assert loaded is not None
-    assert loaded.source_published_at == T0
-    # Собственная дата создания поста не подменяется датой статьи.
-    assert loaded.created_at != loaded.source_published_at
 
 
 def test_duplicate_url_is_rejected(db) -> None:

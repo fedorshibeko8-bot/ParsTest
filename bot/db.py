@@ -46,7 +46,7 @@ from bot.models import (
 logger = logging.getLogger(__name__)
 
 # Версия схемы = максимальный номер миграции.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 1
 
 DEFAULT_BUSY_TIMEOUT_MS = 5_000
 DEFAULT_QUEUE_VISIBLE_LIMIT = 10
@@ -166,19 +166,13 @@ CREATE INDEX IF NOT EXISTS idx_dedup_log_score ON dedup_log(score);
 """
 
 # По одному элементу на будущую версию схемы: (номер, SQL).
-# v2: дата публикации оригинальной статьи — показывается только в служебном
-# уведомлении, в текст поста канала не попадает.
-_SCHEMA_V2 = """
-ALTER TABLE posts ADD COLUMN source_published_at TEXT;
-"""
-
-MIGRATIONS: tuple[tuple[int, str], ...] = ((1, _SCHEMA_V1), (2, _SCHEMA_V2))
+MIGRATIONS: tuple[tuple[int, str], ...] = ((1, _SCHEMA_V1),)
 
 _POST_COLUMNS = (
     "id, url, guid, source, title_original, lead, image_path, image_url, "
     "status, owner_id, created_at, intercepted_at, published_at, dropped_at, "
     "draft_title, draft_text, dedup_score, dedup_state, rewrite_rounds, "
-    "intercept_deadline, last_activity_at, drop_reason, source_published_at"
+    "intercept_deadline, last_activity_at, drop_reason"
 )
 
 
@@ -285,13 +279,10 @@ class Database:
         image_url: str | None = None,
         dedup_score: float | None = None,
         dedup_state: DedupState | str = DedupState.NEW,
-        source_published_at: datetime | None = None,
         created_at: datetime | None = None,
     ) -> Post:
         """Создать пост в статусе ``pending`` и запомнить URL как виденный.
 
-        :param source_published_at: дата публикации оригинальной статьи;
-            хранится для служебных сообщений и в пост канала не входит.
         :raises DuplicatePostError: если пост с таким URL уже существует.
         """
         return await asyncio.to_thread(
@@ -305,7 +296,6 @@ class Database:
             image_url,
             dedup_score,
             DedupState(dedup_state).value,
-            source_published_at,
             created_at,
         )
 
@@ -320,7 +310,6 @@ class Database:
         image_url: str | None,
         dedup_score: float | None,
         dedup_state: str,
-        source_published_at: datetime | None,
         created_at: datetime | None,
     ) -> Post:
         moment = _as_datetime(created_at)
@@ -330,8 +319,7 @@ class Database:
                 cursor = connection.execute(
                     f"INSERT INTO posts (url, guid, source, title_original, lead, "
                     f"image_path, image_url, status, created_at, dedup_score, "
-                    f"dedup_state, source_published_at) "
-                    f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    f"dedup_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         url,
                         guid,
@@ -344,7 +332,6 @@ class Database:
                         stamp,
                         dedup_score,
                         dedup_state,
-                        to_iso(source_published_at),
                     ),
                 )
             except sqlite3.IntegrityError as exc:

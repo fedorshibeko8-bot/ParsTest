@@ -164,22 +164,8 @@ def _new_post_message(post: Post) -> str:
         lines.append(headline)
     if post.source:
         lines.append(f"Источник: {post.source}")
-    lines.append(source_published_line(post))
     lines.append(f"Нажмите «{TAKE_BUTTON_TEXT}», чтобы открыть карточку.")
     return "\n".join(lines)
-
-
-def source_published_line(post: Post) -> str:
-    """Дата публикации оригинальной статьи для служебного уведомления.
-
-    Время показывается в UTC: в этом виде дата приходит из RSS, поэтому
-    подпись не зависит от часового пояса ПК. В текст поста канала строка
-    не попадает — она нужна только админу при выборе новости.
-    """
-    moment = post.source_published_at
-    if moment is None:
-        return "Оригинал опубликован: дата в источнике не указана."
-    return f"Оригинал опубликован: {moment:%d.%m.%Y %H:%M} UTC"
 
 
 def post_headline(post: Post, *, limit: int = 160) -> str:
@@ -370,7 +356,6 @@ def _returned_message(post: Post) -> str:
     headline = post_headline(post)
     if headline:
         lines.append(headline)
-    lines.append(source_published_line(post))
     lines.append("Можно брать.")
     return "\n".join(lines)
 
@@ -481,7 +466,6 @@ __all__ = [
     "release_timed_out",
     "run_maintenance_once",
     "send_to_admins",
-    "source_published_line",
     "take_callback",
     "take_keyboard",
     "take_post",

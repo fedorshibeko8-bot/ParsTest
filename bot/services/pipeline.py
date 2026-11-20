@@ -134,7 +134,6 @@ async def process_feed_item(
             lead=item.lead,
             dedup_score=verdict.score,
             dedup_state=verdict.state,
-            source_published_at=item.published_at,
             created_at=now,
         )
     except DuplicatePostError:

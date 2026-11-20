@@ -98,7 +98,6 @@ class Post:
     intercept_deadline: datetime | None
     last_activity_at: datetime | None
     drop_reason: str | None
-    source_published_at: datetime | None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "Post":
@@ -126,7 +125,6 @@ class Post:
             intercept_deadline=from_iso(row["intercept_deadline"]),
             last_activity_at=from_iso(row["last_activity_at"]),
             drop_reason=row["drop_reason"],
-            source_published_at=from_iso(row["source_published_at"]),
         )
 
     # --- Удобные предикаты ------------------------------------------------

@@ -178,15 +178,6 @@ def test_build_publication_returns_valid_text(make_post) -> None:
     assert text == f"<b>{TITLE}</b>\n\n{BODY}"
 
 
-def test_build_publication_does_not_include_source_date(make_post) -> None:
-    post = ready_post(make_post, source_published_at=T0)
-
-    _title, _body, text = build_publication(post)
-
-    assert "Оригинал опубликован" not in text
-    assert "18.11.2026" not in text
-
-
 def test_build_publication_strips_forbidden_elements(make_post) -> None:
     post = ready_post(
         make_post,
