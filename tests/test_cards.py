@@ -38,6 +38,8 @@ from bot.services.cards import (
     ACTION_EDIT,
     ACTION_EDIT_IMAGE,
     ACTION_EDIT_TEXT,
+    ACTION_NEXT,
+    ACTION_PREV,
     ACTION_PUBLISH,
     ACTION_REMOVE_IMAGE,
     ACTION_SOURCE,
@@ -47,6 +49,7 @@ from bot.services.cards import (
     card_keyboard,
     card_text,
     card_title,
+    distinct_draft_versions,
     edit_keyboard,
     image_file,
     keyboard_for,
@@ -196,6 +199,8 @@ def test_card_keyboard_has_all_menu_buttons(make_post) -> None:
         post_callback(ACTION_AI, post.id),
         post_callback(ACTION_EDIT, post.id),
         post_callback(ACTION_DROP, post.id),
+        post_callback(ACTION_PREV, post.id),
+        post_callback(ACTION_NEXT, post.id),
         post_callback(ACTION_SOURCE, post.id),
     ]
 
@@ -362,6 +367,98 @@ def test_source_is_shown_only_to_owner(db, make_post, settings) -> None:
     assert bot.texts == [f"Источник: {post.url}"]
     assert {method.chat_id for method in bot.of(SendMessage)} == {555}
     assert run(db.get_post(post.id)).status is PostStatus.INTERCEPTED
+
+
+# ----------------------------------------------------------------------
+# Стрелки вариантов черновика
+# ----------------------------------------------------------------------
+def _press(
+    bot: FakeBot,
+    db: Database,
+    settings: Settings,
+    post,
+    action: str,
+):
+    """Нажать кнопку карточки и вернуть обновлённый пост."""
+    callback = make_callback(
+        bot, post_callback(action, post.id), make_message(bot)
+    )
+    run(handle_post_action(callback, bot, db, settings, FakeState()))
+    return run(db.get_post(post.id))
+
+
+def _answer_texts(bot: FakeBot) -> list[str]:
+    return [answer.text or "" for answer in bot.of(AnswerCallbackQuery)]
+
+
+def test_arrows_choose_between_edits(db, make_post, settings) -> None:
+    post = take(db, make_post())
+    run(db.add_draft_version(post.id, title="Первый", body="Первый вариант."))
+    run(db.add_draft_version(post.id, title="Второй", body="Второй вариант."))
+
+    bot = FakeBot()
+    stored = _press(bot, db, settings, post, ACTION_PREV)
+
+    assert stored.draft_title == "Первый"
+    assert stored.draft_text == "Первый вариант."
+    assert "Вариант 1 из 2." in _answer_texts(bot)
+    assert "Первый вариант." in (bot.of(EditMessageText)[-1].text or "")
+
+    stored = _press(bot, db, settings, post, ACTION_NEXT)
+
+    assert stored.draft_title == "Второй"
+    assert stored.draft_text == "Второй вариант."
+    assert "Вариант 2 из 2." in _answer_texts(bot)
+
+
+def test_arrows_ignore_rollback_copies(db, make_post, settings) -> None:
+    """Откат создаёт запись истории, но не превращается в лишний шаг."""
+    post = take(db, make_post())
+    run(db.add_draft_version(post.id, title="A", body="Вариант A."))
+    run(db.add_draft_version(post.id, title="B", body="Вариант B."))
+
+    bot = FakeBot()
+    _press(bot, db, settings, post, ACTION_PREV)
+
+    versions = run(db.get_draft_versions(post.id))
+    variants = distinct_draft_versions(versions)
+    assert len(versions) == 3
+    assert [variant.body for variant in variants] == ["Вариант A.", "Вариант B."]
+
+    stored = _press(bot, db, settings, post, ACTION_NEXT)
+    assert stored.draft_text == "Вариант B."
+
+
+def test_arrows_report_boundaries(db, make_post, settings) -> None:
+    post = take(db, make_post())
+    run(db.add_draft_version(post.id, title="Первый", body="Первый вариант."))
+    run(db.add_draft_version(post.id, title="Второй", body="Второй вариант."))
+
+    bot = FakeBot()
+    _press(bot, db, settings, post, ACTION_PREV)  # уже на первом
+
+    stored = _press(bot, db, settings, post, ACTION_PREV)
+    assert stored.draft_text == "Первый вариант."
+    assert "Это первый вариант текста." in _answer_texts(bot)
+
+    _press(bot, db, settings, post, ACTION_NEXT)  # на втором
+    stored = _press(bot, db, settings, post, ACTION_NEXT)
+    assert stored.draft_text == "Второй вариант."
+    assert "Это последний вариант текста." in _answer_texts(bot)
+
+
+def test_arrows_with_single_variant_explain_nothing_to_switch(
+    db, make_post, settings
+) -> None:
+    post = take(db, make_post())
+    run(db.add_draft_version(post.id, title="Единственный", body="Один текст."))
+
+    bot = FakeBot()
+    stored = _press(bot, db, settings, post, ACTION_NEXT)
+
+    assert stored.draft_text == "Один текст."
+    assert "У поста пока один вариант текста." in _answer_texts(bot)
+    assert not bot.of(EditMessageText)
 
 
 def test_drop_marks_post_dropped_and_edits_message(db, make_post, settings) -> None:

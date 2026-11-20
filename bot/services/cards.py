@@ -20,7 +20,7 @@ from __future__ import annotations
 import html
 import logging
 from pathlib import Path
-from typing import Final
+from typing import Final, Sequence
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
@@ -31,7 +31,7 @@ from aiogram.types import (
     Message,
 )
 
-from bot.models import DedupState, Post
+from bot.models import DedupState, DraftVersion, Post
 from bot.services.format import last_complete_sentence, trim_to_word
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,8 @@ ACTION_EDIT_TEXT: Final[str] = "text"
 ACTION_EDIT_IMAGE: Final[str] = "image"
 ACTION_REMOVE_IMAGE: Final[str] = "remove_image"
 ACTION_BACK: Final[str] = "back"
+ACTION_PREV: Final[str] = "prev"
+ACTION_NEXT: Final[str] = "next"
 
 BUTTONS: Final[dict[str, str]] = {
     ACTION_PUBLISH: "🚀 Опубликовать",
@@ -62,6 +64,8 @@ BUTTONS: Final[dict[str, str]] = {
     ACTION_EDIT_IMAGE: "🖼 Изменить картинку",
     ACTION_REMOVE_IMAGE: "🚫 Убрать картинку",
     ACTION_BACK: "↩ Назад",
+    ACTION_PREV: "⬅️",
+    ACTION_NEXT: "➡️",
 }
 
 
@@ -191,6 +195,7 @@ def card_keyboard(post_id: int) -> InlineKeyboardMarkup:
                 _button(ACTION_EDIT, post_id),
                 _button(ACTION_DROP, post_id),
             ],
+            [_button(ACTION_PREV, post_id), _button(ACTION_NEXT, post_id)],
             [_button(ACTION_SOURCE, post_id)],
         ]
     )
@@ -211,6 +216,40 @@ def edit_keyboard(post_id: int) -> InlineKeyboardMarkup:
 def keyboard_for(post_id: int, *, edit_menu: bool = False) -> InlineKeyboardMarkup:
     """Клавиатура карточки: основная или подменю правки."""
     return edit_keyboard(post_id) if edit_menu else card_keyboard(post_id)
+
+
+# ----------------------------------------------------------------------
+# Варианты черновика (стрелки ⬅️ / ➡️)
+# ----------------------------------------------------------------------
+def distinct_draft_versions(
+    versions: Sequence[DraftVersion],
+) -> list[DraftVersion]:
+    """Уникальные варианты текста в порядке появления.
+
+    Каждая правка и каждый откат создают новую запись в истории, но
+    откат лишь копирует старый текст. Для стрелок важны именно разные
+    варианты, иначе одна и та же редакция встречалась бы несколько раз.
+    """
+    unique: list[DraftVersion] = []
+    seen: set[tuple[str, str]] = set()
+    for version in versions:
+        key = (version.title.strip(), version.body.strip())
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(version)
+    return unique
+
+
+def draft_variant_index(
+    variants: Sequence[DraftVersion], current: DraftVersion
+) -> int | None:
+    """Индекс текущего варианта в списке уникальных (``None``, если не найден)."""
+    key = (current.title.strip(), current.body.strip())
+    for index, variant in enumerate(variants):
+        if (variant.title.strip(), variant.body.strip()) == key:
+            return index
+    return None
 
 
 # ----------------------------------------------------------------------
@@ -322,6 +361,8 @@ __all__ = [
     "ACTION_EDIT",
     "ACTION_EDIT_IMAGE",
     "ACTION_EDIT_TEXT",
+    "ACTION_NEXT",
+    "ACTION_PREV",
     "ACTION_PUBLISH",
     "ACTION_REMOVE_IMAGE",
     "ACTION_SOURCE",
@@ -333,6 +374,8 @@ __all__ = [
     "card_text",
     "card_title",
     "caption_len",
+    "distinct_draft_versions",
+    "draft_variant_index",
     "edit_keyboard",
     "image_file",
     "keyboard_for",

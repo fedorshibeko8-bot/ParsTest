@@ -31,10 +31,14 @@ from bot.services.cards import (
     ACTION_EDIT,
     ACTION_EDIT_IMAGE,
     ACTION_EDIT_TEXT,
+    ACTION_NEXT,
+    ACTION_PREV,
     ACTION_PUBLISH,
     ACTION_REMOVE_IMAGE,
     ACTION_SOURCE,
     POST_CALLBACK_PREFIX,
+    distinct_draft_versions,
+    draft_variant_index,
     parse_post_callback,
     send_card,
     show_card_for_callback,
@@ -147,6 +151,12 @@ async def handle_post_action(
             await callback.message.answer(f"Источник: {post.url}")
         return
 
+    if action in (ACTION_PREV, ACTION_NEXT):
+        await _switch_draft(
+            callback, bot, db, post, step=-1 if action == ACTION_PREV else 1
+        )
+        return
+
     if action == ACTION_DROP:
         await _drop_post(callback, db, post)
         return
@@ -197,6 +207,54 @@ async def _rewrite_post(
         )
     if outcome.hint:
         await callback.message.answer(outcome.hint)
+
+
+async def _switch_draft(
+    callback: CallbackQuery,
+    bot: Bot,
+    db: Database,
+    post: Post,
+    *,
+    step: int,
+) -> None:
+    """Показать соседний вариант текста по стрелкам ⬅️ / ➡️.
+
+    Варианты сравниваются по содержимому: откат создаёт новую запись
+    истории, но не должен превращаться в лишний шаг. Выбранный текст
+    копируется в текущую версию, поэтому именно он уйдёт в канал.
+    """
+    versions = await db.get_draft_versions(post.id)
+    variants = distinct_draft_versions(versions)
+    if len(variants) < 2:
+        await callback.answer(
+            "У поста пока один вариант текста.", show_alert=True
+        )
+        return
+
+    current = next(
+        (version for version in versions if version.is_current),
+        versions[-1] if versions else None,
+    )
+    index = draft_variant_index(variants, current) if current is not None else None
+    if index is None:
+        index = len(variants) - 1
+
+    target = index + step
+    if target < 0:
+        await callback.answer("Это первый вариант текста.", show_alert=True)
+        return
+    if target >= len(variants):
+        await callback.answer("Это последний вариант текста.", show_alert=True)
+        return
+
+    await db.rollback_draft(post.id, variants[target].version_no)
+    fresh = await db.get_post(post.id)
+    if fresh is None:
+        await callback.answer("Пост не найден.", show_alert=True)
+        return
+
+    await callback.answer(f"Вариант {target + 1} из {len(variants)}.")
+    await show_card_for_callback(callback, bot, fresh)
 
 
 async def _publish_post(

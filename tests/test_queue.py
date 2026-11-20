@@ -191,6 +191,46 @@ def test_announce_shows_headline_but_not_lead(db, make_post) -> None:
     assert button.callback_data == take_callback(post.id)
 
 
+def test_announce_shows_source_published_at(db, make_post) -> None:
+    settings = make_settings(admin_ids=(1,))
+    post = make_post(
+        title_original="GTA 6 выйдет в 2027 году", source_published_at=T0
+    )
+    bot = FakeBot()
+
+    run(announce_posts(bot, db, settings, [post]))
+
+    assert "Оригинал опубликован: 18.11.2026 12:00 UTC" in bot.sent[0].text
+
+
+def test_announce_says_when_source_date_is_missing(db, make_post) -> None:
+    settings = make_settings(admin_ids=(1,))
+    post = make_post(source_published_at=None)
+    bot = FakeBot()
+
+    run(announce_posts(bot, db, settings, [post]))
+
+    assert "дата в источнике не указана" in bot.sent[0].text
+
+
+def test_all_admins_busy_means_no_notifications(db, make_post) -> None:
+    """Новость создаётся и остаётся в очереди, но сообщение не уходит никому."""
+    settings = make_settings(admin_ids=(1, 2))
+    first = make_post()
+    second = make_post()
+    run(db.mark_intercepted(first.id, 1, now=T0))
+    run(db.mark_intercepted(second.id, 2, now=T0))
+    fresh = make_post(created_at=T0 + offset(minutes=1))
+    bot = FakeBot()
+
+    result = run(announce_posts(bot, db, settings, [fresh]))
+
+    assert result == NotifyResult()
+    assert bot.sent == []
+    stored = run(db.get_post(fresh.id))
+    assert stored is not None and stored.status is PostStatus.PENDING
+
+
 def test_post_headline_cuts_long_titles(make_post) -> None:
     post = make_post(title_original="Слово " * 100)
 

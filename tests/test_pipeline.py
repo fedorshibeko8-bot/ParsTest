@@ -24,7 +24,7 @@ from bot.services.images import save_image_bytes
 from bot.services.pipeline import handle_feed_item, handle_feed_items
 from bot.services.queue import take_callback
 from tests.fakes import PNG, FakeBot
-from tests.helpers import make_settings, run
+from tests.helpers import T0, make_settings, run
 
 NEWS_TITLE = "Rockstar показала новый кадр GTA 6 и дату релиза"
 NEWS_LEAD = "Студия Rockstar Games показала новый кадр из GTA 6 и дату выхода."
@@ -81,6 +81,42 @@ def test_gta_news_reaches_queue(db, settings) -> None:
     assert post.title_original == NEWS_TITLE
     assert post.dedup_state is DedupState.NEW
     assert run(db.list_pending()) == [post]
+
+
+def test_source_published_at_is_kept_for_notification(db, settings) -> None:
+    bot = FakeBot()
+
+    post = run(
+        handle_feed_item(bot, db, settings, make_item(published_at=T0))
+    )
+
+    assert post is not None
+    assert post.source_published_at == T0
+    assert "Оригинал опубликован: 18.11.2026 12:00 UTC" in bot.texts[0]
+
+
+def test_news_is_queued_even_when_all_admins_are_busy(
+    db, settings, make_post
+) -> None:
+    """Все админы заняты: пост создаётся, но уведомление не уходит никому."""
+    busy = make_post(title_original="Аниме-фестиваль перенесли", lead="")
+    run(db.mark_intercepted(busy.id, 1, now=T0))
+    bot = FakeBot()
+
+    post = run(
+        handle_feed_item(
+            bot,
+            db,
+            settings,
+            make_item(url="https://example.com/gta6/busy", guid="vgc-busy"),
+        )
+    )
+
+    assert post is not None
+    assert post.status is PostStatus.PENDING
+    # Новость сохранена в очереди, но личных сообщений нет.
+    assert [pending.id for pending in run(db.list_pending())] == [post.id]
+    assert bot.texts == []
 
 
 # ----------------------------------------------------------------------
