@@ -49,6 +49,7 @@ def make_settings(**overrides: Any) -> Settings:
         "logs_dir": Path("logs"),
         "database_path": Path("data/bot.db"),
         "images_dir": Path("data/images"),
+        "backup_dir": Path("data/backups"),
         # Картинки
         "image_max_mb": 10,
         "image_keep_hours": 48,

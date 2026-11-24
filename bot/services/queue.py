@@ -203,9 +203,9 @@ async def announce_posts(
 
     recipients = await free_admin_ids(db, settings)
     if not recipients:
-        # Владелец решил: новости продолжают приходить и создаваться, но если
-        # все админы заняты, уведомление не уходит никому. Посты остаются
-        # в pending и видны в очереди, когда кто-то освободится.
+        # Все админы заняты: новости продолжают создаваться и остаются
+        # в pending, но уведомление сейчас не уходит никому. Следующий
+        # проход обслуживания дошлёт его первому освободившемуся.
         logger.info(
             "Все админы заняты: %d новых постов остаются в очереди без уведомлений",
             len(ordered),
@@ -214,17 +214,38 @@ async def announce_posts(
 
     result = NotifyResult()
     for post in ordered:
-        # Один и тот же список получателей: пока идёт рассылка, статусы не
-        # меняются, а после перехвата админ сам станет занятым.
+        # Кому именно этот пост ещё не показывали: уже получивший не увидит
+        # дубль, а занятый админ получит его позже, когда освободится.
+        notified = await db.notified_admin_ids(post.id)
+        targets = [admin_id for admin_id in recipients if admin_id not in notified]
+        if not targets:
+            continue
         partial = await send_to_admins(
             bot,
             settings,
             _new_post_message(post),
             reply_markup=take_keyboard(post.id),
-            exclude=[admin_id for admin_id in settings.admin_ids if admin_id not in recipients],
+            exclude=[admin_id for admin_id in settings.admin_ids if admin_id not in targets],
         )
+        # 403 («не активировал бота») тоже считаем попыткой: иначе бот
+        # повторял бы её каждые полминуты до бесконечности.
+        await db.mark_notified(post.id, set(partial.sent) | set(partial.forbidden))
         result = result.merge(partial)
     return result
+
+
+async def announce_pending(
+    bot: Bot, db: Database, settings: Settings
+) -> NotifyResult:
+    """Дослать уведомления о pending, которые кто-то ещё не видел.
+
+    Вызывается из обслуживания очереди: новость, пришедшая в момент, когда
+    все админы были заняты, не теряется — она уйдёт первому освободившемуся.
+    """
+    posts = await db.list_pending(
+        limit=settings.queue_visible_limit, newest_first=True
+    )
+    return await announce_posts(bot, db, settings, posts)
 
 
 # ----------------------------------------------------------------------

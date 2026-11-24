@@ -29,7 +29,7 @@ import logging
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 
 from bot.models import (
     DedupLogEntry,
@@ -46,7 +46,7 @@ from bot.models import (
 logger = logging.getLogger(__name__)
 
 # Версия схемы = максимальный номер миграции.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 DEFAULT_BUSY_TIMEOUT_MS = 5_000
 DEFAULT_QUEUE_VISIBLE_LIMIT = 10
@@ -165,8 +165,31 @@ CREATE INDEX IF NOT EXISTS idx_dedup_log_created ON dedup_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_dedup_log_score ON dedup_log(score);
 """
 
+# v2: историческая миграция под дату публикации статьи. Само поле отменено
+# по требованию владельца, но номер версии сохраняется: базы, успевшие
+# обновиться до v2, уже имеют ``user_version = 2`` и не должны откатываться.
+_SCHEMA_V2 = "-- v2: source_published_at (отменено, поле не используется)."
+
+# v3: журнал уведомлений «пост × админ» — чтобы не терять новости, которые
+# пришли, пока все админы были заняты, и не слать одно и то же дважды.
+_SCHEMA_V3 = """
+CREATE TABLE IF NOT EXISTS post_notifications (
+    post_id     INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    admin_id    INTEGER NOT NULL,
+    notified_at TEXT    NOT NULL,
+    PRIMARY KEY (post_id, admin_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_notifications_admin
+    ON post_notifications(admin_id);
+"""
+
 # По одному элементу на будущую версию схемы: (номер, SQL).
-MIGRATIONS: tuple[tuple[int, str], ...] = ((1, _SCHEMA_V1),)
+MIGRATIONS: tuple[tuple[int, str], ...] = (
+    (1, _SCHEMA_V1),
+    (2, _SCHEMA_V2),
+    (3, _SCHEMA_V3),
+)
 
 _POST_COLUMNS = (
     "id, url, guid, source, title_original, lead, image_path, image_url, "
@@ -1038,6 +1061,49 @@ class Database:
             round_no=0,
             created_at=created_at,
         )
+
+    # ------------------------------------------------------------------
+    # Журнал уведомлений «пост × админ»
+    # ------------------------------------------------------------------
+    async def notified_admin_ids(self, post_id: int) -> set[int]:
+        """Кому уже уходило уведомление об этом посте."""
+        return await asyncio.to_thread(self._notified_admin_ids_sync, post_id)
+
+    def _notified_admin_ids_sync(self, post_id: int) -> set[int]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT admin_id FROM post_notifications WHERE post_id = ?",
+                (post_id,),
+            ).fetchall()
+        return {int(row["admin_id"]) for row in rows}
+
+    async def mark_notified(
+        self,
+        post_id: int,
+        admin_ids: Iterable[int],
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        """Запомнить, что этим админам пост уже анонсирован.
+
+        Запись идемпотентна: повторная отметка того же админа ничего
+        не меняет.
+        """
+        ids = tuple(int(value) for value in admin_ids)
+        if not ids:
+            return
+        await asyncio.to_thread(self._mark_notified_sync, post_id, ids, now)
+
+    def _mark_notified_sync(
+        self, post_id: int, admin_ids: tuple[int, ...], now: datetime | None
+    ) -> None:
+        stamp = to_iso(_as_datetime(now))
+        with self._connect() as connection, connection:
+            connection.executemany(
+                "INSERT OR IGNORE INTO post_notifications "
+                "(post_id, admin_id, notified_at) VALUES (?, ?, ?)",
+                [(post_id, admin_id, stamp) for admin_id in admin_ids],
+            )
 
     async def count_rewrite_rounds(self, post_id: int) -> int:
         """Сколько кругов рерайта ИИ прошёл черновик (для подсказки после 3–4)."""

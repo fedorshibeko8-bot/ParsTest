@@ -28,8 +28,8 @@ BACKUP_PREFIX = "bot"
 
 
 def backup_dir_for(settings: Settings) -> Path:
-    """Каталог снимков: ``data/backups`` рядом с файлом БД."""
-    return settings.database_path.parent / "backups"
+    """Каталог снимков, заданный через ``BACKUP_DIR``."""
+    return settings.backup_dir
 
 
 async def run_daily_backup(

@@ -112,7 +112,9 @@ async def run_polling(settings: Settings) -> None:
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         await dispatcher.start_polling(
-            bot, allowed_updates=dispatcher.resolve_used_update_types()
+            bot,
+            allowed_updates=dispatcher.resolve_used_update_types(),
+            handle_signals=True,
         )
     finally:
         stop_event.set()

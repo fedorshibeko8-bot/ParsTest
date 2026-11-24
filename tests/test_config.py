@@ -16,7 +16,16 @@ CHANNEL = "-1001234567890"
 
 def _read(monkeypatch: pytest.MonkeyPatch, tmp_path, **env: str):
     """Прочитать Settings из окружения, не трогая локальный .env."""
-    for name in ("DRY_RUN", "CHANNEL_ID", "GEMINI_API_KEY", "GROQ_API_KEY"):
+    for name in (
+        "DRY_RUN",
+        "CHANNEL_ID",
+        "GEMINI_API_KEY",
+        "GROQ_API_KEY",
+        "DATABASE_PATH",
+        "IMAGES_DIR",
+        "LOGS_DIR",
+        "BACKUP_DIR",
+    ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("BOT_TOKEN", "123456:test-token")
     monkeypatch.setenv("ADMIN_IDS", "1")
@@ -76,3 +85,37 @@ def test_dry_run_needs_no_keys(monkeypatch, tmp_path) -> None:
 
     assert settings.gemini_api_key == ""
     assert settings.groq_api_key == ""
+
+
+def test_data_paths_are_configurable(monkeypatch, tmp_path) -> None:
+    data_dir = tmp_path / "persistent"
+    settings = _read(
+        monkeypatch,
+        tmp_path,
+        DATABASE_PATH=str(data_dir / "bot.db"),
+        IMAGES_DIR=str(data_dir / "images"),
+        LOGS_DIR=str(data_dir / "logs"),
+        BACKUP_DIR=str(data_dir / "backups"),
+    )
+
+    assert settings.database_path == data_dir / "bot.db"
+    assert settings.images_dir == data_dir / "images"
+    assert settings.logs_dir == data_dir / "logs"
+    assert settings.backup_dir == data_dir / "backups"
+    settings.ensure_directories()
+    assert all(
+        path.is_dir()
+        for path in (
+            settings.database_path.parent,
+            settings.images_dir,
+            settings.logs_dir,
+            settings.backup_dir,
+        )
+    )
+
+
+def test_backup_dir_defaults_next_to_database(monkeypatch, tmp_path) -> None:
+    data_dir = tmp_path / "persistent"
+    settings = _read(monkeypatch, tmp_path, DATABASE_PATH=str(data_dir / "bot.db"))
+
+    assert settings.backup_dir == data_dir / "backups"

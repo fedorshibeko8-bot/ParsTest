@@ -11,7 +11,8 @@ from pathlib import Path
 
 from bot.db import Database
 from bot.models import to_iso
-from tests.helpers import T0, run
+from bot.services.backup import backup_dir_for
+from tests.helpers import T0, make_settings, run
 
 
 def test_backup_creates_readable_snapshot(db: Database, tmp_path: Path) -> None:
@@ -43,6 +44,16 @@ def test_backup_of_empty_database(db: Database, tmp_path: Path) -> None:
     backup_dir = tmp_path / "backups"
     snapshot = run(db.backup(backup_dir))
     assert snapshot.exists() and snapshot.stat().st_size > 0
+
+
+def test_backup_dir_uses_configured_path(tmp_path: Path) -> None:
+    backup_dir = tmp_path / "persistent" / "backups"
+    settings = make_settings(
+        database_path=tmp_path / "database" / "bot.db",
+        backup_dir=backup_dir,
+    )
+
+    assert backup_dir_for(settings) == backup_dir
 
 
 def test_to_iso_is_lexicographically_ordered() -> None:

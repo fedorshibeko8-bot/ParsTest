@@ -223,6 +223,7 @@ class Settings:
     logs_dir: Path
     database_path: Path
     images_dir: Path
+    backup_dir: Path
 
     # Картинки (T06)
     image_max_mb: int
@@ -261,6 +262,7 @@ class Settings:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self.images_dir.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
+        self.backup_dir.mkdir(parents=True, exist_ok=True)
 
 
 def _clean_optional(raw: str) -> str:
@@ -383,6 +385,11 @@ def load_settings(env_path: Path | None = None) -> Settings:
     if errors:
         raise ConfigError("\n".join(f"- {message}" for message in errors))
 
+    database_path = _resolve_path(reader.text("DATABASE_PATH"), "data/bot.db")
+    backup_dir = _resolve_path(
+        reader.text("BACKUP_DIR"), str(database_path.parent / "backups")
+    )
+
     return Settings(
         bot_token=bot_token,
         channel_id=channel_id,
@@ -395,8 +402,9 @@ def load_settings(env_path: Path | None = None) -> Settings:
         groq_model=reader.text("GROQ_MODEL", "openai/gpt-oss-120b"),
         log_level=log_level,
         logs_dir=_resolve_path(reader.text("LOGS_DIR"), "logs"),
-        database_path=_resolve_path(reader.text("DATABASE_PATH"), "data/bot.db"),
+        database_path=database_path,
         images_dir=_resolve_path(reader.text("IMAGES_DIR"), "data/images"),
+        backup_dir=backup_dir,
         image_max_mb=image_max_mb,
         image_keep_hours=image_keep_hours,
         poll_interval_min_sec=poll_interval_min_sec,
